@@ -100,7 +100,7 @@ async function startServer() {
         await fastify.register(chatSocket);
         await fastify.register(chatRoutes, { prefix: "/chat" });
 
-        await fastify.listen({ port: PORT, host: '0.0.0.0' });
+        await fastify.listen({ port: 10000, host: '0.0.0.0' });
 
         // await fastify.listen({ port: 10000 });
         // fastify.log.info(`🚀 Server running at http://localhost:3000`);
