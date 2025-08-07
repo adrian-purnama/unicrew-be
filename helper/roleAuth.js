@@ -67,10 +67,6 @@ const roleAuth = (allowedRoles = []) => {
         return res.status(401).json({ message: 'User not found or inactive' });
       }
 
-      if (!user.isVerified) {
-        return res.status(403).json({ message: 'Account is not verified' });
-      }
-
       req.userId = _id;
       req.userRole = role;
       req.user = user;

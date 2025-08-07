@@ -89,4 +89,129 @@ const cancelApplyJobDto = {
     },
 };
 
-module.exports = { jobPostDto, idParam, jobFeedDto, cancelApplyJobDto, applyJobDto };
+const saveJobDto = {
+    body: {
+        type: "object",
+        required: ["jobId"],
+        properties: {
+            jobId: {
+                type: "string",
+                pattern: "^[0-9a-fA-F]{24}$", // MongoDB ObjectId pattern
+            },
+        },
+        additionalProperties: false,
+    },
+    response: {
+        201: {
+            type: "object",
+            properties: {
+                message: { type: "string" },
+                savedCount: { type: "number" },
+                maxAllowed: { type: "number" },
+                subscription: { type: "string", enum: ["free", "premium"] },
+            },
+        },
+        400: {
+            type: "object",
+            properties: {
+                message: { type: "string" },
+            },
+        },
+        403: {
+            type: "object",
+            properties: {
+                message: { type: "string" },
+                currentCount: { type: "number" },
+                maxAllowed: { type: "number" },
+                subscription: { type: "string" },
+            },
+        },
+        404: {
+            type: "object",
+            properties: {
+                message: { type: "string" },
+            },
+        },
+    },
+};
+
+const getSavedJobsDto = {
+    querystring: {
+        type: "object",
+        properties: {
+            page: {
+                type: "string",
+                pattern: "^[1-9][0-9]*$", // Positive integer as string
+            },
+            limit: {
+                type: "string",
+                pattern: "^[1-9][0-9]*$", // Positive integer as string
+            },
+        },
+        additionalProperties: false,
+    },
+    response: {
+        200: {
+            type: "object",
+            properties: {
+                savedJobs: {
+                    type: "array",
+                    items: {
+                        type: "object",
+                        properties: {
+                            _id: { type: "string" },
+                            title: { type: "string" },
+                            description: { type: "string" },
+                            workType: { type: "string", enum: ["remote", "onsite", "hybrid"] },
+                            location: { type: "object" },
+                            salaryRange: { type: "object" },
+                            company: { type: "object" },
+                            requiredSkills: { type: "array" },
+                            savedAt: { type: "string", format: "date-time" },
+                            createdAt: { type: "string", format: "date-time" },
+                            applicationStatus: {
+                                type: ["string", "null"],
+                                enum: ["applied", "shortListed", "accepted", "rejected", null],
+                            },
+                        },
+                    },
+                },
+                total: { type: "number" },
+                page: { type: "number" },
+                totalPages: { type: "number" },
+                hasNextPage: { type: "boolean" },
+                hasPrevPage: { type: "boolean" },
+                savedCount: { type: "number" },
+                maxAllowed: { type: "number" },
+                subscription: { type: "string", enum: ["free", "premium"] },
+            },
+        },
+    },
+};
+
+const checkSavedJobDto = {
+    params: {
+        type: "object",
+        required: ["jobId"],
+        properties: {
+            jobId: {
+                type: "string",
+                pattern: "^[0-9a-fA-F]{24}$", // MongoDB ObjectId pattern
+            },
+        },
+        additionalProperties: false,
+    },
+    response: {
+        200: {
+            type: "object",
+            properties: {
+                isSaved: { type: "boolean" },
+                savedCount: { type: "number" },
+                maxAllowed: { type: "number" },
+                canSaveMore: { type: "boolean" },
+            },
+        },
+    },
+};
+
+module.exports = { jobPostDto, idParam, jobFeedDto, cancelApplyJobDto, applyJobDto, checkSavedJobDto, getSavedJobsDto, saveJobDto };

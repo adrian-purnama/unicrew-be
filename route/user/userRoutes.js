@@ -17,11 +17,10 @@ const portfolioFolderId = process.env.GDRIVE_FOLDER_PORTFOLIO;
 const upload = multer({ dest: "temp/" });
 
 function extractDriveFileId(link) {
-  if (!link || typeof link !== 'string') return null;
-  const match = link.match(/(?:id=|\/d\/)([a-zA-Z0-9_-]{10,})/);
-  return match ? match[1] : null;
+    if (!link || typeof link !== "string") return null;
+    const match = link.match(/(?:id=|\/d\/)([a-zA-Z0-9_-]{10,})/);
+    return match ? match[1] : null;
 }
-
 
 async function userRoutes(fastify, options) {
     fastify.patch(
@@ -124,9 +123,19 @@ async function userRoutes(fastify, options) {
 
     fastify.get("/profile-check", { preHandler: roleAuth(["user"]) }, async (req, res) => {
         try {
-            const user = req.user;
+            const user = await User.findById(req.userId); 
+            if (!user) return res.code(404).send({ message: "User not found" });
+
             const result = isUserProfileComplete(user);
-            console.log(result)
+
+            result.isVerified = user.isVerified;
+
+            if (!user.isVerified && user.expiresAt) {
+                result.daysRemainingUntilDeletion = Math.max(
+                    0,
+                    Math.floor((user.expiresAt - Date.now()) / (1000 * 60 * 60 * 24))
+                );
+            }
 
             return res.code(200).send(result);
         } catch (err) {

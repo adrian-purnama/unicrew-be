@@ -88,34 +88,47 @@ async function authRoutes(fastify, option) {
         }
     );
 
-    fastify.post("/reverify", { schema: emailRoleDto }, async (req, res) => {
-        const { email, role } = req.body;
+    fastify.post("/reverify", async (req, res) => {
+        let email, role;
+
+        // Method 1: From JWT token
+        if (req.body.token) {
+            try {
+                const decoded = jwt.verify(req.body.token, jwtSecret);
+                console.log(decoded)
+                email = decoded.email;
+                role = decoded.role;
+
+                if (!email || !role) {
+                    return res.code(400).send({ message: "Invalid token payload" });
+                }
+            } catch (err) {
+                return res.code(401).send({ message: "Invalid or expired token" });
+            }
+        }
+
+        // Method 2: From email + role directly
+        else if (req.body.email && req.body.role) {
+            email = req.body.email.toLowerCase().trim();
+            role = req.body.role;
+        } else {
+            return res.code(400).send({ message: "Provide token or { email, role }" });
+        }
 
         try {
             let user;
+            if (role === "user") user = await User.findOne({ email });
+            else if (role === "admin") user = await Admin.findOne({ email });
+            else if (role === "company") user = await Company.findOne({ email });
+            else return res.code(400).send({ message: "Invalid role" });
 
-            if (role === "user") {
-                user = await User.findOne({ email });
-            } else if (role === "admin") {
-                user = await Admin.findOne({ email });
-            } else if (role === "company") {
-                user = await Company.findOne({ email });
-            } else {
-                return res.code(400).send({ message: "Invalid role" });
-            }
-
-            if (!user) {
-                return res.code(404).send({ message: "Account not found" });
-            }
-
-            if (user.isVerified) {
-                return res.code(200).send({ message: "Already verified" });
-            }
+            if (!user) return res.code(404).send({ message: "Account not found" });
+            if (user.isVerified) return res.code(200).send({ message: "Already verified" });
 
             const otp = await createOtp(user._id);
             await sendVerifyEmail(user.email, otp, role);
 
-            return res.code(200).send({ message: "Verification email sent" });
+            return res.code(200).send({ message: "Verification email resent successfully" });
         } catch (err) {
             console.error("❌ Reverify error:", err);
             return res.code(500).send({ message: "Internal server error" });

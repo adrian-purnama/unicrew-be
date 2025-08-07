@@ -35,12 +35,14 @@ function loginRoutes(fastify, options) {
                 {
                     _id: user._id,
                     role,
+                    email: user.email,
                     name: user.fullName || user.companyName ,
                     profilePicture: user.profilePicture,
                 },
                 jwtSecret,
                 { expiresIn: "7d" }
             );
+            
 
             return res.code(200).send({
                 message: "Login successful",

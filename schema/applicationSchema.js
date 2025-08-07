@@ -1,3 +1,4 @@
+// models/Application.js
 const mongoose = require("mongoose");
 
 const applicationSchema = new mongoose.Schema({
@@ -13,7 +14,7 @@ const applicationSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ["applied", "shortlisted", "accepted", "rejected"],
+        enum: ["applied", "shortlisted", "accepted", "rejected" ,"ended"],
         default: "applied",
     },
     chatRoom: {
@@ -24,6 +25,9 @@ const applicationSchema = new mongoose.Schema({
         type: Date,
         default: Date.now,
     },
+    endedAt: Date,
+    userReviewed: { type: Boolean, default: false },
+    companyReviewed: { type: Boolean, default: false },
 });
 
 module.exports = mongoose.model("Application", applicationSchema);

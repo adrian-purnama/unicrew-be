@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const companySchema = new mongoose.Schema(
     {
-        companyName: { type: String, required: true, unique: true},
+        companyName: { type: String, required: true, unique: true },
         industries: {
             type: [{ type: mongoose.Schema.Types.ObjectId, ref: "Industry", required: true }],
             validate: {
@@ -13,7 +13,7 @@ const companySchema = new mongoose.Schema(
             },
         },
         role: { type: String, required: true, default: "company" },
-        description: {type: String},
+        description: { type: String },
 
         location: {
             provinsi: { type: mongoose.Schema.Types.ObjectId, ref: "Provinsi" },
@@ -22,14 +22,14 @@ const companySchema = new mongoose.Schema(
         },
 
         socialLinks: {
-            website: { type: String, default : null },
-            instagram: { type: String, default : null },
-            twitter: { type: String, default : null },
-            linkedin: { type: String, default : null },
+            website: { type: String, default: null },
+            instagram: { type: String, default: null },
+            twitter: { type: String, default: null },
+            linkedin: { type: String, default: null },
         },
 
         // Account
-        email: {type: String, required: true, unique: true},
+        email: { type: String, required: true, unique: true },
         password: {
             type: String,
             required: true,
@@ -65,6 +65,10 @@ const companySchema = new mongoose.Schema(
             createJobTries: { type: Number, default: 0 },
             createJobLimit: { type: Number, default: 5 },
             lastCreateJobAttempt: { type: Date },
+        },
+        rating: {
+            average: { type: Number, default: 0 },
+            count: { type: Number, default: 0 },
         },
 
         isActive: {
