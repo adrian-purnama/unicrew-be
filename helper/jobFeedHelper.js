@@ -80,6 +80,27 @@ function calculateMatchScore(job, user, filters = {}) {
     return { score, reasons };
 }
 
+
+/**
+ * Generate star rating display object
+ * @param {Number} rating - Average rating (0-5)
+ * @returns {Object} Star rating info
+ */
+function generateStarRating(rating = 0) {
+    const fullStars = Math.floor(rating);
+    const hasHalfStar = rating % 1 >= 0.5;
+    const emptyStars = 5 - fullStars - (hasHalfStar ? 1 : 0);
+
+    return {
+        full: fullStars,
+        half: hasHalfStar ? 1 : 0,
+        empty: emptyStars,
+        display: "★".repeat(fullStars) + (hasHalfStar ? "☆" : "") + "☆".repeat(emptyStars),
+        percentage: (rating / 5) * 100,
+        text: rating > 0 ? `${rating}/5` : "No reviews yet"
+    };
+}
+
 module.exports = {
     calculateMatchScore,
 };

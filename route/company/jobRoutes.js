@@ -7,8 +7,13 @@ const { default: mongoose } = require("mongoose");
 const { calculateMatchScore } = require("../../helper/jobFeedHelper");
 const Notification = require("../../schema/notificationSchema");
 const ChatRoom = require("../../schema/chatRoomSchema");
-const { getMaxSavedJobs } = require("../../helper/subscriptionHelper");
+const {
+    getMaxSavedJobs,
+    isPremium,
+    getSubscriptionLabel,
+} = require("../../helper/subscriptionHelper");
 const Review = require("../../schema/reviewSchema");
+const { recalculateRatings } = require("../../helper/ratingHelper");
 
 async function jobRoutes(fastify, options) {
     // Create new job post
@@ -178,252 +183,228 @@ async function jobRoutes(fastify, options) {
     );
 
     // Fixed job-feed route with debugging and simplified aggregation
-    fastify.get(
-        "/job-feed",
-        {
-            preHandler: roleAuth(["user"]),
-            schema: jobFeedDto,
-        },
-        async (req, res) => {
-            const userId = req.userId;
-            const rawQuery = req.query;
+   fastify.get(
+  "/job-feed",
+  {
+    schema: jobFeedDto,
+  },
+  async (req, res) => {
+    const userId = req.userId; // undefined if not logged in
+    const rawQuery = req.query;
 
-            const location = {
-                provinsi: rawQuery["location[provinsi]"],
-                kabupaten: rawQuery["location[kabupaten]"],
-                kecamatan: rawQuery["location[kecamatan]"],
-            };
-            const locationCleaned = Object.values(location).some(Boolean) ? location : undefined;
+    // Parse location filters
+    const location = {
+      provinsi: rawQuery["location[provinsi]"],
+      kabupaten: rawQuery["location[kabupaten]"],
+      kecamatan: rawQuery["location[kecamatan]"],
+    };
+    const locationCleaned = Object.values(location).some(Boolean) ? location : undefined;
 
-            const normalizeArray = (val) => (Array.isArray(val) ? val : val ? [val] : []);
-            const skillFilter = normalizeArray(rawQuery.skills);
-            const workTypeFilterArray = normalizeArray(rawQuery.workType);
-            const industryFilterArray = normalizeArray(rawQuery.industries);
-            const minSalary = rawQuery.minSalary ? parseInt(rawQuery.minSalary) : undefined;
-            const keyword = rawQuery.keyword?.toLowerCase()?.trim();
+    // Helper to normalize array query params
+    const normalizeArray = (val) => (Array.isArray(val) ? val : val ? [val] : []);
+    const skillFilter = normalizeArray(rawQuery.skills);
+    const workTypeFilterArray = normalizeArray(rawQuery.workType);
+    const industryFilterArray = normalizeArray(rawQuery.industries);
+    const minSalary = rawQuery.minSalary ? parseInt(rawQuery.minSalary) : undefined;
+    const keyword = rawQuery.keyword?.toLowerCase()?.trim();
 
-            const page = parseInt(rawQuery.page) || 1;
-            const limit = parseInt(rawQuery.limit) || 10;
-            const offset = (page - 1) * limit;
+    // Pagination params
+    const page = parseInt(rawQuery.page) || 1;
+    const limit = parseInt(rawQuery.limit) || 10;
+    const offset = (page - 1) * limit;
 
-            const hasExplicitFilters =
-                skillFilter.length > 0 ||
-                workTypeFilterArray.length > 0 ||
-                industryFilterArray.length > 0 ||
-                locationCleaned ||
-                typeof minSalary === "number" ||
-                !!keyword;
+    // Detect if user applied any explicit filters/search
+    const hasExplicitFilters =
+      skillFilter.length > 0 ||
+      workTypeFilterArray.length > 0 ||
+      industryFilterArray.length > 0 ||
+      locationCleaned ||
+      typeof minSalary === "number" ||
+      !!keyword;
 
-            try {
-                const user = await User.findById(userId)
-                    .populate([
-                        "skills",
-                        "location.provinsi",
-                        "location.kabupaten",
-                        "location.kecamatan",
-                    ])
-                    .lean();
+    try {
+      let user = null;
+      let interactedJobIds = [];
 
-                if (!user) return res.code(404).send({ message: "User not found" });
+      if (userId) {
+        // Fetch user data for logged-in user
+        user = await User.findById(userId)
+          .populate(["skills", "location.provinsi", "location.kabupaten", "location.kecamatan"])
+          .lean();
 
-                const interactedJobIds = await Application.find({ user: userId }).distinct("job");
+        if (!user) return res.code(404).send({ message: "User not found" });
 
-                let finalMatch = { isActive: true };
-                if (keyword) {
-                    finalMatch.$or = [
-                        { title: { $regex: keyword, $options: "i" } },
-                        { "company.companyName": { $regex: keyword, $options: "i" } },
-                    ];
-                }
+        interactedJobIds = await Application.find({ user: userId }).distinct("job");
+      }
 
-                let searchStrategy = "all_active";
-                if (interactedJobIds.length > 0) {
-                    finalMatch._id = {
-                        $nin: interactedJobIds.map((id) => new mongoose.Types.ObjectId(id)),
-                    };
-                    searchStrategy = "exclude_applied";
-                }
+      // Base filter: only active jobs
+      let finalMatch = { isActive: true };
 
-                const basicCount = await JobPost.countDocuments(finalMatch);
-                if (basicCount === 0) {
-                    const totalJobsInDB = await JobPost.countDocuments({});
-                    const activeJobsInDB = await JobPost.countDocuments({ isActive: true });
+      // Keyword search filter
+      if (keyword) {
+        finalMatch.$or = [
+          { title: { $regex: keyword, $options: "i" } },
+          { "company.companyName": { $regex: keyword, $options: "i" } },
+        ];
+      }
 
-                    if (activeJobsInDB === 0) {
-                        return res.send({
-                            jobs: [],
-                            total: 0,
-                            page,
-                            totalPages: 0,
-                            hasNextPage: false,
-                            hasPrevPage: false,
-                            searchStrategy: "no_active_jobs",
-                            isFiltered: hasExplicitFilters,
-                            message: "No active jobs available",
-                        });
-                    }
-                }
+      // Exclude already applied jobs for logged in users
+      if (interactedJobIds.length > 0) {
+        finalMatch._id = {
+          $nin: interactedJobIds.map((id) => new mongoose.Types.ObjectId(id)),
+        };
+      }
 
-                // User-based filtering only if no filters or search provided
-                if (basicCount > 0 && !hasExplicitFilters) {
-                    const userBasedQuery = { ...finalMatch };
-                    const orConditions = [];
+      // User-based filtering only if logged in and no explicit filters/search applied
+      if (user && !hasExplicitFilters) {
+        const userBasedQuery = { ...finalMatch };
+        const orConditions = [];
 
-                    if (user.skills?.length > 0) {
-                        const userSkillIds = user.skills.map(
-                            (s) => new mongoose.Types.ObjectId(s._id)
-                        );
-                        orConditions.push({ requiredSkills: { $in: userSkillIds } });
-                    }
-
-                    orConditions.push({ workType: "remote" });
-
-                    if (user.location?.provinsi) {
-                        orConditions.push({
-                            "location.provinsi": new mongoose.Types.ObjectId(
-                                user.location.provinsi._id
-                            ),
-                        });
-                    }
-
-                    orConditions.push({
-                        $or: [
-                            { requiredSkills: { $exists: false } },
-                            { requiredSkills: { $size: 0 } },
-                        ],
-                    });
-
-                    if (orConditions.length > 0) {
-                        userBasedQuery.$or = orConditions;
-                        const userBasedCount = await JobPost.countDocuments(userBasedQuery);
-                        if (userBasedCount > 0) {
-                            finalMatch = userBasedQuery;
-                            searchStrategy = "user_based";
-                        }
-                    }
-                }
-
-                const totalCount = await JobPost.countDocuments(finalMatch);
-                if (totalCount === 0) {
-                    return res.send({
-                        jobs: [],
-                        total: 0,
-                        page,
-                        totalPages: 0,
-                        hasNextPage: false,
-                        hasPrevPage: false,
-                        searchStrategy,
-                        isFiltered: hasExplicitFilters,
-                        message: "No jobs match the current criteria",
-                    });
-                }
-
-                const jobs = await JobPost.aggregate([
-                    { $match: finalMatch },
-                    { $skip: offset },
-                    { $limit: limit },
-                    {
-                        $lookup: {
-                            from: "users",
-                            localField: "company",
-                            foreignField: "_id",
-                            as: "company",
-                        },
-                    },
-                    { $unwind: { path: "$company", preserveNullAndEmptyArrays: true } },
-                    {
-                        $lookup: {
-                            from: "skills",
-                            localField: "requiredSkills",
-                            foreignField: "_id",
-                            as: "requiredSkills",
-                        },
-                    },
-                ]);
-
-                for (let job of jobs) {
-                    for (const locField of ["provinsi", "kabupaten", "kecamatan"]) {
-                        const locId = job.location?.[locField];
-                        if (locId) {
-                            try {
-                                const locDoc = await mongoose
-                                    .model(locField.charAt(0).toUpperCase() + locField.slice(1))
-                                    .findById(locId)
-                                    .select("name")
-                                    .lean();
-                                if (locDoc) job.location[locField] = locDoc;
-                            } catch (err) {
-                                console.log(`⚠️ Could not populate ${locField}:`, err.message);
-                            }
-                        }
-                    }
-                }
-
-                const maxSavedAllowed = user.subscription === "premium" ? 50 : 5;
-                const userSavedCount = user.savedJobs?.length || 0;
-
-                const enrichedJobs = jobs.map((job) => {
-                    const userLoc = user.location || {};
-                    const { score, reasons } = calculateMatchScore(job, user, {
-                        location: {
-                            provinsi: (
-                                locationCleaned?.provinsi || userLoc.provinsi?._id
-                            )?.toString(),
-                            kabupaten: (
-                                locationCleaned?.kabupaten || userLoc.kabupaten?._id
-                            )?.toString(),
-                            kecamatan: (
-                                locationCleaned?.kecamatan || userLoc.kecamatan?._id
-                            )?.toString(),
-                        },
-                        workType: workTypeFilterArray,
-                        minSalary,
-                        industries: industryFilterArray,
-                    });
-
-                    const isSaved = user.savedJobs?.some(
-                        (entry) => entry.job.toString() === job._id.toString()
-                    );
-
-                    return {
-                        ...job,
-                        matchScore: score,
-                        whyThisJob: reasons,
-                        searchStrategy,
-                        isSaved,
-                        canSaveMore: isSaved || userSavedCount < maxSavedAllowed,
-                        userSavedCount,
-                        maxSavedAllowed,
-                    };
-                });
-
-                const sortedJobs = enrichedJobs.sort((a, b) => b.matchScore - a.matchScore);
-
-                res.send({
-                    jobs: sortedJobs,
-                    total: totalCount,
-                    page,
-                    totalPages: Math.ceil(totalCount / limit),
-                    hasNextPage: page < Math.ceil(totalCount / limit),
-                    hasPrevPage: page > 1,
-                    searchStrategy,
-                    isFiltered: hasExplicitFilters,
-                    debug: {
-                        appliedJobsCount: interactedJobIds.length,
-                        queryUsed: searchStrategy,
-                        aggregationWorked: true,
-                    },
-                });
-            } catch (err) {
-                console.error("❌ Error in /job-feed:", err);
-                res.code(500).send({
-                    message: "Failed to fetch job feed",
-                    error: err.message,
-                    stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
-                });
-            }
+        if (user.skills?.length > 0) {
+          const userSkillIds = user.skills.map((s) => new mongoose.Types.ObjectId(s._id));
+          orConditions.push({ requiredSkills: { $in: userSkillIds } });
         }
-    );
+
+        orConditions.push({ workType: "remote" });
+
+        if (user.location?.provinsi) {
+          orConditions.push({
+            "location.provinsi": new mongoose.Types.ObjectId(user.location.provinsi._id),
+          });
+        }
+
+        orConditions.push({
+          $or: [{ requiredSkills: { $exists: false } }, { requiredSkills: { $size: 0 } }],
+        });
+
+        if (orConditions.length > 0) {
+          userBasedQuery.$or = orConditions;
+          const userBasedCount = await JobPost.countDocuments(userBasedQuery);
+          if (userBasedCount > 0) {
+            finalMatch = userBasedQuery;
+          }
+        }
+      }
+
+      const totalCount = await JobPost.countDocuments(finalMatch);
+      if (totalCount === 0) {
+        return res.send({
+          jobs: [],
+          total: 0,
+          page,
+          totalPages: 0,
+          hasNextPage: false,
+          hasPrevPage: false,
+          searchStrategy: userId ? "user_based" : "all_active",
+          isFiltered: hasExplicitFilters,
+          message: "No jobs match the current criteria",
+        });
+      }
+
+      // Query jobs with aggregation to lookup company and skills
+      const jobs = await JobPost.aggregate([
+        { $match: finalMatch },
+        { $skip: offset },
+        { $limit: limit },
+        {
+          $lookup: {
+            from: "users",
+            localField: "company",
+            foreignField: "_id",
+            as: "company",
+          },
+        },
+        { $unwind: { path: "$company", preserveNullAndEmptyArrays: true } },
+        {
+          $lookup: {
+            from: "skills",
+            localField: "requiredSkills",
+            foreignField: "_id",
+            as: "requiredSkills",
+          },
+        },
+      ]);
+
+      // Populate location names for each job
+      for (let job of jobs) {
+        for (const locField of ["provinsi", "kabupaten", "kecamatan"]) {
+          const locId = job.location?.[locField];
+          if (locId) {
+            try {
+              const locDoc = await mongoose
+                .model(locField.charAt(0).toUpperCase() + locField.slice(1))
+                .findById(locId)
+                .select("name")
+                .lean();
+              if (locDoc) job.location[locField] = locDoc;
+            } catch (err) {
+              console.log(`⚠️ Could not populate ${locField}:`, err.message);
+            }
+          }
+        }
+      }
+
+      // If logged in, calculate match scores and saved status
+      let enrichedJobs;
+      if (user) {
+        const maxSavedAllowed = user.subscription === "premium" ? 50 : 5;
+        const userSavedCount = user.savedJobs?.length || 0;
+
+        enrichedJobs = jobs.map((job) => {
+          const userLoc = user.location || {};
+          const { score, reasons } = calculateMatchScore(job, user, {
+            location: {
+              provinsi: (locationCleaned?.provinsi || userLoc.provinsi?._id)?.toString(),
+              kabupaten: (locationCleaned?.kabupaten || userLoc.kabupaten?._id)?.toString(),
+              kecamatan: (locationCleaned?.kecamatan || userLoc.kecamatan?._id)?.toString(),
+            },
+            workType: workTypeFilterArray,
+            minSalary,
+            industries: industryFilterArray,
+          });
+
+          const isSaved = user.savedJobs?.some(
+            (entry) => entry.job.toString() === job._id.toString()
+          );
+
+          return {
+            ...job,
+            matchScore: score,
+            whyThisJob: reasons,
+            isSaved,
+            canSaveMore: isSaved || userSavedCount < maxSavedAllowed,
+            userSavedCount,
+            maxSavedAllowed,
+          };
+        });
+
+        enrichedJobs.sort((a, b) => b.matchScore - a.matchScore);
+      } else {
+        // Guests get plain jobs (no match score or saved info)
+        enrichedJobs = jobs;
+      }
+
+      res.send({
+        jobs: enrichedJobs,
+        total: totalCount,
+        page,
+        totalPages: Math.ceil(totalCount / limit),
+        hasNextPage: page < Math.ceil(totalCount / limit),
+        hasPrevPage: page > 1,
+        searchStrategy: userId ? "user_based" : "all_active",
+        isFiltered: hasExplicitFilters,
+      });
+    } catch (err) {
+      console.error("❌ Error in /job-feed:", err);
+      res.code(500).send({
+        message: "Failed to fetch job feed",
+        error: err.message,
+        stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
+      });
+    }
+  }
+);
+
 
     fastify.post(
         "/apply",
@@ -830,10 +811,6 @@ async function jobRoutes(fastify, options) {
                                 select: "name",
                             },
                             {
-                                path: "location.kecamatan",
-                                select: "name",
-                            },
-                            {
                                 path: "requiredSkills",
                                 select: "name",
                             },
@@ -844,6 +821,8 @@ async function jobRoutes(fastify, options) {
                 if (!user) {
                     return res.code(404).send({ message: "User not found" });
                 }
+
+                const userSubscription = user.subscription || "free";
 
                 // Filter out inactive jobs and sort by savedAt (newest first)
                 const activeSavedJobs = user.savedJobs
@@ -882,6 +861,36 @@ async function jobRoutes(fastify, options) {
                     applicationStatus: applicationMap[savedJob.job._id.toString()] || null,
                 }));
 
+                // Use subscription helper for stats calculation
+                const maxAllowed = getMaxSavedJobs(userSubscription);
+                const savedCount = activeSavedJobs.length;
+                const percentageUsed = Math.round((savedCount / maxAllowed) * 100);
+                const isUserPremium = isPremium(userSubscription);
+                const subscriptionLabel = getSubscriptionLabel(userSubscription);
+
+                // Generate upgrade message using subscription helper logic
+                let upgradeMessage = null;
+                if (!isUserPremium && savedCount >= 1) {
+                    // Changed from 3 to 1 since free limit is now 2
+                    upgradeMessage = `You're using ${savedCount} of ${maxAllowed} saved job slots. Upgrade to Premium for 50 slots!`;
+                } else if (savedCount >= maxAllowed * 0.8) {
+                    upgradeMessage = `You're running low on saved job slots (${savedCount}/${maxAllowed}).`;
+                }
+
+                // Generate stats object using subscription helper
+                const stats = {
+                    savedCount,
+                    maxAllowed,
+                    percentageUsed,
+                    remainingSlots: maxAllowed - savedCount,
+                    isNearLimit: savedCount >= maxAllowed * 0.8,
+                    isAtLimit: savedCount >= maxAllowed,
+                    subscription: userSubscription,
+                    subscriptionLabel,
+                    isPremium: isUserPremium,
+                    upgradeMessage,
+                };
+
                 res.send({
                     savedJobs: enrichedJobs,
                     total: activeSavedJobs.length,
@@ -890,9 +899,12 @@ async function jobRoutes(fastify, options) {
                     hasNextPage:
                         parseInt(page) < Math.ceil(activeSavedJobs.length / parseInt(limit)),
                     hasPrevPage: parseInt(page) > 1,
+                    // Integrated stats using subscription helper
+                    stats,
+                    // Legacy fields for backward compatibility
                     savedCount: activeSavedJobs.length,
-                    maxAllowed: user.subscription === "premium" ? 50 : 5,
-                    subscription: user.subscription,
+                    maxAllowed,
+                    subscription: userSubscription,
                 });
             } catch (err) {
                 console.error("Error fetching saved jobs:", err);
@@ -992,9 +1004,10 @@ async function jobRoutes(fastify, options) {
                     })
                         .populate({
                             path: "job",
+                            select: "title description company",
                             populate: {
                                 path: "company",
-                                select: "companyName email profilePicture",
+                                select: "companyName email profilePicture", // Ensure profilePicture is included
                             },
                         })
                         .lean();
@@ -1008,22 +1021,46 @@ async function jobRoutes(fastify, options) {
                         status: { $in: ["ended", "accepted"] }, // Jobs that are completed
                         companyReviewed: { $ne: true }, // Company hasn't reviewed yet
                     })
-                        .populate("user", "fullName email profilePicture")
-                        .populate("job", "title")
+                        .populate("user", "fullName email profilePicture") // Include user profile picture
+                        .populate("job", "title description")
                         .lean();
                 }
 
                 // Format the response based on who needs to be reviewed
-                const pendingReviews = applications.map((app) => ({
-                    _id: app._id,
-                    job: app.job,
-                    // For users: they review the company
-                    // For companies: they review the user
-                    counterpartyType: userRole === "user" ? "Company" : "User",
-                    company: userRole === "user" ? app.job?.company : undefined,
-                    user: userRole === "company" ? app.user : undefined,
-                    completedDate: app.endedAt || app.updatedAt,
-                }));
+                const pendingReviews = applications.map((app) => {
+                    const baseReview = {
+                        _id: app._id,
+                        job: {
+                            _id: app.job._id,
+                            title: app.job.title,
+                            description: app.job.description,
+                        },
+                        counterpartyType: userRole === "user" ? "Company" : "User",
+                        completedDate: app.endedAt || app.updatedAt,
+                        applicationStatus: app.status,
+                    };
+
+                    if (userRole === "user") {
+                        // User is reviewing the company
+                        baseReview.company = {
+                            _id: app.job?.company?._id,
+                            companyName: app.job?.company?.companyName,
+                            name: app.job?.company?.companyName, // Alias for consistency
+                            email: app.job?.company?.email,
+                            profilePicture: app.job?.company?.profilePicture,
+                        };
+                    } else {
+                        // Company is reviewing the user
+                        baseReview.user = {
+                            _id: app.user._id,
+                            fullName: app.user.fullName,
+                            email: app.user.email,
+                            profilePicture: app.user.profilePicture,
+                        };
+                    }
+
+                    return baseReview;
+                });
 
                 res.send(pendingReviews);
             } catch (err) {
@@ -1034,18 +1071,27 @@ async function jobRoutes(fastify, options) {
     );
 
     fastify.post("/review", { preHandler: roleAuth(["user", "company"]) }, async (req, res) => {
-        const { applicationId, rating, comment } = req.body;
+        const { applicationId, rating, comment, tags = [], wouldRecommend } = req.body;
         const reviewerId = req.userId;
         const reviewerRole = req.userRole; // 'user' or 'company'
+        console.log(reviewerId, reviewerRole)
 
         try {
-            // Find the application
+            // Validate rating
+            if (!rating || rating < 1 || rating > 5) {
+                return res.code(400).send({
+                    message: "Rating must be between 1 and 5",
+                });
+            }
+
+            // Find the application with full population
             const application = await Application.findById(applicationId)
-                .populate("user")
+                .populate("user", "fullName email profilePicture rating")
                 .populate({
                     path: "job",
                     populate: {
                         path: "company",
+                        select: "companyName email profilePicture rating",
                     },
                 });
 
@@ -1053,40 +1099,65 @@ async function jobRoutes(fastify, options) {
                 return res.code(404).send({ message: "Application not found" });
             }
 
+            // Verify application status allows reviews
+            if (!["ended", "accepted"].includes(application.status)) {
+                return res.code(400).send({
+                    message: "Can only review completed applications",
+                });
+            }
+
+            // Check authorization
+            if (reviewerRole === "user" && application.user._id.toString() !== reviewerId) {
+                return res.code(403).send({ message: "Not authorized to review this application" });
+            }
+
+            if (
+                reviewerRole === "company" &&
+                application.job.company._id.toString() !== reviewerId
+            ) {
+                return res.code(403).send({ message: "Not authorized to review this application" });
+            }
+
             // Check if already reviewed
-            const alreadyReviewed = await Review.findOne({
+            const existingReview = await Review.findOne({
                 reviewer: reviewerId,
                 application: applicationId,
                 reviewerType: reviewerRole === "user" ? "User" : "Company",
             });
 
-            if (alreadyReviewed) {
-                return res.code(400).send({ message: "You already reviewed this application." });
+            if (existingReview) {
+                return res
+                    .code(400)
+                    .send({ message: "You have already reviewed this application" });
             }
 
             // Determine who is being reviewed
-            let revieweeId, revieweeType;
+            let revieweeId, revieweeType, revieweeName;
 
             if (reviewerRole === "user") {
                 // User is reviewing the company
                 revieweeId = application.job.company._id;
                 revieweeType = "Company";
+                revieweeName = application.job.company.companyName;
             } else {
                 // Company is reviewing the user
                 revieweeId = application.user._id;
                 revieweeType = "User";
+                revieweeName = application.user.fullName;
             }
 
             // Create the review
-            await Review.create({
+            const newReview = await Review.create({
                 reviewer: reviewerId,
                 reviewerType: reviewerRole === "user" ? "User" : "Company",
                 reviewee: revieweeId,
                 revieweeType: revieweeType,
                 application: applicationId,
+                job: application.job._id,
                 rating,
-                comment,
-                job: application.job._id, // Add job reference for context
+                comment: comment || "",
+                tags: tags || [],
+                wouldRecommend: wouldRecommend || null,
             });
 
             // Update the application to mark as reviewed
@@ -1097,28 +1168,59 @@ async function jobRoutes(fastify, options) {
             }
             await application.save();
 
+            // Recalculate and update ratings
+            const updatedRating = await recalculateRatings(revieweeId, revieweeType);
+
             // Create notification for the reviewee
             await Notification.create({
                 recipientType: revieweeType.toLowerCase(),
                 recipient: revieweeId,
                 type: "review",
                 event: "review_received",
-                message: `You received a new ${rating}-star review`,
+                message: `You received a new ${rating}-star review from ${
+                    reviewerRole === "user"
+                        ? application.user.fullName
+                        : application.job.company.companyName
+                }`,
                 metadata: {
                     reviewerId,
                     applicationId,
                     rating,
                     jobId: application.job._id,
+                    reviewId: newReview._id,
+                    averageRating: updatedRating.average,
+                    totalReviews: updatedRating.count,
                 },
             });
 
+            // Log the review activity
+            console.log(
+                `Review submitted: ${reviewerRole} ${reviewerId} rated ${revieweeType} ${revieweeId} with ${rating} stars`
+            );
+
             res.send({
+                success: true,
                 message: "Review submitted successfully",
-                reviewedEntity: revieweeType,
+                data: {
+                    review: {
+                        _id: newReview._id,
+                        rating,
+                        comment,
+                        reviewedEntity: revieweeType,
+                        revieweeName,
+                    },
+                    updatedRating: {
+                        average: updatedRating.average,
+                        count: updatedRating.count,
+                    },
+                },
             });
         } catch (err) {
             console.error("Error submitting review:", err);
-            res.code(500).send({ message: "Failed to submit review" });
+            res.code(500).send({
+                message: "Failed to submit review",
+                error: process.env.NODE_ENV === "development" ? err.message : undefined,
+            });
         }
     });
 }
