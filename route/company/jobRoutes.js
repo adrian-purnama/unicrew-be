@@ -186,6 +186,7 @@ async function jobRoutes(fastify, options) {
    fastify.get(
   "/job-feed",
   {
+    preHandler : roleAuth(["user"]),
     schema: jobFeedDto,
   },
   async (req, res) => {
@@ -947,40 +948,53 @@ async function jobRoutes(fastify, options) {
     );
 
     // routes/endApplication.js
-    fastify.post(
-        "/application/end",
-        { preHandler: roleAuth(["user", "company"]) },
-        async (req, res) => {
-            const { applicationId } = req.body;
-            const userId = req.userId;
+fastify.post(
+  "/application/end",
+  { preHandler: roleAuth(["user", "company"]) },
+  async (req, res) => {
+    const { applicationId } = req.body;
+    const userId = req.userId;
 
-            if (!applicationId) {
-                return res.code(400).send({ message: "Missing applicationId." });
-            }
+    if (!applicationId) {
+      return res.code(400).send({ message: "Missing applicationId." });
+    }
 
-            const application = await Application.findOne({
-                _id: applicationId,
-                status: "accepted",
-            }).populate("job");
+    // Fetch by id (don't pre-filter by status so we can handle idempotency)
+    const application = await Application.findById(applicationId).populate("job");
+    if (!application) {
+      return res.code(404).send({ message: "Application not found." });
+    }
 
-            if (!application) {
-                return res.code(404).send({ message: "Accepted application not found." });
-            }
+    // Helpers to compare ObjectId / populated docs
+    const toId = (v) => v?._id?.toString?.() ?? v?.toString?.();
 
-            const isUser = application.user?.toString() === userId;
-            const isCompany = application.job?.postedBy?.toString() === userId;
+    // Authorization: user (applicant) or job owner (company)
+    const isUser = toId(application.user) === userId;
+    const jobOwnerIds = [toId(application.job?.company), toId(application.job?.postedBy)].filter(Boolean);
+    const isCompany = jobOwnerIds.includes(userId);
 
-            if (!isUser && !isCompany) {
-                return res.code(403).send({ message: "You are not authorized to end this job." });
-            }
+    if (!isUser && !isCompany) {
+      return res.code(403).send({ message: "You are not authorized to end this job." });
+    }
 
-            application.status = "ended";
-            application.endedAt = new Date();
-            await application.save();
+    // Idempotent: already ended
+    if (application.status === "ended") {
+      return res.send({ message: "Application already ended.", endedAt: application.endedAt });
+    }
 
-            return res.send({ message: "Application marked as ended." });
-        }
-    );
+    // Only allow ending from accepted
+    if (application.status !== "accepted") {
+      return res.code(400).send({ message: "Only accepted applications can be ended." });
+    }
+
+    application.status = "ended";
+    application.endedAt = new Date();
+    await application.save();
+
+    return res.send({ message: "Application marked as ended.", endedAt: application.endedAt });
+  }
+);
+
 
     // Fixed pending-reviews and review endpoints
 

@@ -107,6 +107,46 @@ const sendForgotPasswordEmail = async (targetEmail, token, role) => {
   }
 };
 
+const sendApplicantStatusEmail = async (targetEmail, status, jobTitle, ctaUrl) => {
+  // Only email for shortlisted/accepted as requested
+  if (!["shortListed", "accepted"].includes(status)) return;
+
+  const isShortlisted = status === "shortListed";
+  const subject = isShortlisted
+    ? `You're shortlisted for ${jobTitle} 🎉`
+    : `You're accepted for ${jobTitle} ✅`;
+
+  const safeCta = ctaUrl || `${feLink}/user`;
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; padding: 20px;">
+      <h2>${isShortlisted ? "Great news!" : "Congratulations!"}</h2>
+      <p>
+        You have been <strong>${isShortlisted ? "shortlisted" : "accepted"}</strong>
+        for the position: <strong>${jobTitle}</strong>.
+      </p>
+      <p>
+        ${isShortlisted
+          ? "The company would like to move you forward. Please review the next steps."
+          : "You're moving to the final stage. Please review your next steps."}
+      </p>
+      <a href="${safeCta}" style="
+        display: inline-block;
+        background-color: ${isShortlisted ? "#2563EB" : "#16A34A"};
+        color: #fff;
+        padding: 10px 16px;
+        text-decoration: none;
+        border-radius: 6px;
+        font-weight: 600;
+      ">View Application</a>
+      <p style="margin-top: 10px; font-size: 14px;">
+        Or open this link: <a href="${safeCta}">${safeCta}</a>
+      </p>
+    </div>
+  `;
+
+  await sendEmail(targetEmail, subject, html);
+};
 
 
-module.exports = { sendVerifyEmail, sendForgotPasswordEmail };
+module.exports = { sendVerifyEmail, sendForgotPasswordEmail, sendApplicantStatusEmail };
