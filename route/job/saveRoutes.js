@@ -1,6 +1,7 @@
+
 module.exports = async function (fastify) {
-  const roleAuth = require("../../helper/roleAuth");
-  const User = require("../../schema/userSchema");
+    const { roleAuth } = require("../../helper/roleAuth");
+    const User = require("../../schema/userSchema");
   const JobPost = require("../../schema/jobPostSchema");
   const Application = require("../../schema/applicationSchema");
   const { getMaxSavedJobs, isPremium, getSubscriptionLabel } = require("../../helper/subscriptionHelper");
@@ -9,8 +10,8 @@ module.exports = async function (fastify) {
         "/save-job",
         {
             preHandler: roleAuth(["user"]),
-            schema: {
-                body: {
+            body: {
+                    schema: {
                     type: "object",
                     required: ["jobId"],
                     properties: {

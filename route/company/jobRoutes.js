@@ -1,5 +1,4 @@
 const JobPost = require("../../schema/jobPostSchema");
-const roleAuth = require("../../helper/roleAuth");
 const { jobPostDto, jobFeedDto, cancelApplyJobDto, applyJobDto } = require("./dto");
 const User = require("../../schema/userSchema");
 const Application = require("../../schema/applicationSchema");
@@ -14,6 +13,7 @@ const {
 } = require("../../helper/subscriptionHelper");
 const Review = require("../../schema/reviewSchema");
 const { recalculateRatings } = require("../../helper/ratingHelper");
+const { roleAuth } = require("../../helper/roleAuth");
 
 async function jobRoutes(fastify, options) {
     // Create new job post
@@ -190,7 +190,7 @@ async function jobRoutes(fastify, options) {
     schema: jobFeedDto,
   },
   async (req, res) => {
-    const userId = req.userId; // undefined if not logged in
+    const userId = req.userId;
     const rawQuery = req.query;
 
     // Parse location filters

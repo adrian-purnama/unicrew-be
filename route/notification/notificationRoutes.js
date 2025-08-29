@@ -1,5 +1,6 @@
+const { roleAuth } = require("../../helper/roleAuth");
 const Notification = require("../../schema/notificationSchema"); // Adjust path as needed
-const roleAuth = require("../../helper/roleAuth");
+
 
 async function notificationRoutes(fastify, options) {
     fastify.get(

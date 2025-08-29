@@ -1,6 +1,6 @@
 const fastify = require("fastify")({
   logger: {
-    level: "error",
+    level: "error",   // only log errors and above (fatal)
     transport: {
       target: "pino-pretty",
       options: {
@@ -12,6 +12,8 @@ const fastify = require("fastify")({
     },
   },
 });
+
+
 const fastifyMultipart = require("@fastify/multipart");
 const mongoose = require("mongoose");
 const cors = require("@fastify/cors");
@@ -24,13 +26,16 @@ const loginRoutes = require("./route/auth/loginRoutes");
 const adminRoutes = require("./route/admin/adminRoutes");
 const userRoutes = require("./route/user/userRoutes");
 const companyRoutes = require("./route/company/companyRoutes");
-const jobRoutes = require("./route/company/jobRoutes");
+// const jobRoutes = require("./route/company/jobRoutes");
 const notificationRoutes = require("./route/notification/notificationRoutes");
 const chatSocket = require("./route/chat/chatSocket");
 const { chatRoutes } = require("./route/chat/chatRoutes");
 const applicationRoutes = require("./route/job/applicationRoutes");
 const saveRoutes = require("./route/job/saveRoutes");
 const reviewRoutes = require("./route/job/reviewRoutes");
+const { roleAuth } = require("./helper/roleAuth");
+const jobRoutes = require("./route/job/jobRoutes");
+const assetRoutes = require("./route/asset/assetRoutes");
 
 dotenv.config();
 const MONGODB_URI = process.env.MONGODB_LINK;
@@ -94,24 +99,26 @@ async function startServer() {
     });
 
     //routes
+    // await fastify.register(jobRoutes, { prefix: "/company" });
+
     await fastify.register(authRoutes, { prefix: "/auth" });
     await fastify.register(registerRoutes, { prefix: "/register" });
     await fastify.register(loginRoutes, { prefix: "/login" });
     await fastify.register(adminRoutes, { prefix: "/admin" });
     await fastify.register(userRoutes, { prefix: "/user" });
     await fastify.register(companyRoutes, { prefix: "/company" });
-    // await fastify.register(jobRoutes, { prefix: "/company" });
     await fastify.register(notificationRoutes, { prefix: "/notification" });
-
+    
     await fastify.register(applicationRoutes, { prefix: "/applicant" });
     await fastify.register(jobRoutes, { prefix: "/job" });
     await fastify.register(saveRoutes, { prefix: "/save" });
     await fastify.register(reviewRoutes, { prefix: "/review" });
-
+    await fastify.register(assetRoutes);
+    
     await fastify.register(chatSocket);
     await fastify.register(chatRoutes, { prefix: "/chat" });
 
-    await fastify.listen({ port: 10000, host: "0.0.0.0" });
+    await fastify.listen({ port: 3000, host: "0.0.0.0" });
 
     // await fastify.listen({ port: 10000 });
     // fastify.log.info(`🚀 Server running at http://localhost:3000`);

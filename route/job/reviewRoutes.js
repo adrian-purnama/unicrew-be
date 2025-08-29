@@ -1,6 +1,7 @@
+
 module.exports = async function (fastify) {
-  const roleAuth = require("../../helper/roleAuth");
-  const Application = require("../../schema/applicationSchema");
+    const { roleAuth } = require("../../helper/roleAuth");
+    const Application = require("../../schema/applicationSchema");
   const JobPost = require("../../schema/jobPostSchema");
   const Review = require("../../schema/reviewSchema");
   const Notification = require("../../schema/notificationSchema");

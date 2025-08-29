@@ -1,4 +1,4 @@
-const roleAuth = require("../../helper/roleAuth");
+
 
 const Industry = require("../../schema/industrySchema");
 const Skill = require("../../schema/skillSchema");
@@ -19,6 +19,7 @@ const {
 } = require("./dto");
 const { default: axios } = require("axios");
 const universitySchema = require("../../schema/universitySchema");
+const { roleAuth } = require("../../helper/roleAuth");
 
 async function adminRoutes(fastify, options) {
     fastify.post("/study-program", { preHandler: roleAuth(["admin"]) }, async (req, res) => {

@@ -8,9 +8,8 @@ const userSchema = new mongoose.Schema(
         email: { type: String, required: true, unique: true, trim: true, lowercase: true },
         password: { type: String, required: true },
         profilePicture: {
-            type: String,
-            default:
-                "https://cdn.vectorstock.com/i/500p/58/15/male-silhouette-profile-picture-vector-35845815.jpg",
+             type: mongoose.Schema.Types.ObjectId, ref: "Asset",
+             default : null
         },
         aboutMe: { type: String, trim: true, maxlength: 1000 },
 
@@ -54,8 +53,8 @@ const userSchema = new mongoose.Schema(
         isVerified: { type: Boolean, default: false },
         loginMethod: { type: String, enum: ["email", "google", "linkedin"], default: "email" },
         externalSystemId: { type: String, default: null },
-        curriculumVitae: { type: String, default: null },
-        portfolio: { type: String, default: null },
+        curriculumVitae: {  type: mongoose.Schema.Types.ObjectId, ref: "Asset" , default: null },
+        portfolio: {  type: mongoose.Schema.Types.ObjectId, ref: "Asset" , default: null },
         location: {
             provinsi: { type: mongoose.Schema.Types.ObjectId, ref: "Provinsi" },
             kabupaten: { type: mongoose.Schema.Types.ObjectId, ref: "Kabupaten" },
