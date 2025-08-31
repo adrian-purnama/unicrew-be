@@ -1,6 +1,6 @@
 const fastify = require("fastify")({
   logger: {
-    level: "error",   // only log errors and above (fatal)
+    level: "error", 
     transport: {
       target: "pino-pretty",
       options: {
@@ -33,7 +33,6 @@ const { chatRoutes } = require("./route/chat/chatRoutes");
 const applicationRoutes = require("./route/job/applicationRoutes");
 const saveRoutes = require("./route/job/saveRoutes");
 const reviewRoutes = require("./route/job/reviewRoutes");
-const { roleAuth } = require("./helper/roleAuth");
 const jobRoutes = require("./route/job/jobRoutes");
 const assetRoutes = require("./route/asset/assetRoutes");
 
@@ -49,15 +48,11 @@ async function startServer() {
     fastify.log.info("✅ MongoDB connected");
     console.log("✅ MongoDB connected");
 
-    // await fastify.register(cors, {
-    //     origin : true,
-    //     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', "PATCH"]
-    // });
 
     await fastify.register(require("@fastify/cors"), {
       origin: (origin, cb) => {
         const allowedOrigins = [
-          "https://unicrew.onrender.com",
+          "https://unicrew.nusagitra.web.id",
           "http://localhost:5173",
         ];
         if (!origin || allowedOrigins.includes(origin)) {
@@ -118,7 +113,7 @@ async function startServer() {
     await fastify.register(chatSocket);
     await fastify.register(chatRoutes, { prefix: "/chat" });
 
-    await fastify.listen({ port: 10000, host: "0.0.0.0" });
+    await fastify.listen({ port: 4001, host: "0.0.0.0" });
 
     // await fastify.listen({ port: 10000 });
     // fastify.log.info(`🚀 Server running at http://localhost:3000`);

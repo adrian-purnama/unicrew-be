@@ -277,31 +277,6 @@ async function adminRoutes(fastify, options) {
         res.code(204).send();
     });
 
-    // KELURAHAN
-    //   fastify.post('/kelurahan', { preHandler: roleAuth(['admin']), schema: kelurahanDto }, async (req, res) => {
-    //     const kel = await new Kelurahan({ name: req.body.name, kecamatan: req.body.kecamatan }).save();
-    //     res.code(201).send(kel);
-    //   });
-
-    //   fastify.put('/kelurahan/:id', { preHandler: roleAuth(['admin']), schema: kelurahanDto }, async (req, res) => {
-    //   const updated = await Kelurahan.findByIdAndUpdate(req.params.id, {
-    //     name: req.body.name,
-    //     kecamatan: req.body.kecamatan
-    //   }, { new: true });
-    //   res.send(updated);
-    // });
-
-    // fastify.delete('/kelurahan/:id', { preHandler: roleAuth(['admin']) }, async (req, res) => {
-    //   await Kelurahan.findByIdAndDelete(req.params.id);
-    //   res.code(204).send();
-    // });
-
-    // fastify.get('/kelurahan', { preHandler: roleAuth(['admin']) }, async (req, res) => {
-    //   const filter = req.query.kecamatan ? { kecamatan: req.query.kecamatan } : {};
-    //   const data = await Kelurahan.find(filter).populate('kecamatan');
-    //   res.send(data);
-    // });
-
     fastify.get("/sync-location", { preHandler: roleAuth(["admin"]) }, async (req, res) => {
         try {
             const provinsiRes = await axios.get(
