@@ -53,6 +53,7 @@ async function startServer() {
       origin: (origin, cb) => {
         const allowedOrigins = [
           "https://unicrew.nusagitra.web.id",
+          "https://unikru.nusagitra.web.id",  
           "http://localhost:5173",
         ];
         if (!origin || allowedOrigins.includes(origin)) {
