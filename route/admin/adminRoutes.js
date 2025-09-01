@@ -277,7 +277,7 @@ async function adminRoutes(fastify, options) {
         res.code(204).send();
     });
 
-   fastify.get("/sync-location/stream", { preHandler: roleAuth(["admin"]) }, async (req, res) => {
+   fastify.get("/sync-location/new", { preHandler: roleAuth(["admin"]) }, async (req, res) => {
   // SSE headers via plugin
   res.sse({
     event: "start",
