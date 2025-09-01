@@ -4,7 +4,7 @@ const { createOtp } = require("../../helper/otpHelper");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const dotenv = require("dotenv");
-const mongoose = require("mongoose"); // 👈 for transactions
+const mongoose = require("mongoose");
 dotenv.config();
 
 const Admin = require("../../schema/adminSchema");
@@ -60,7 +60,7 @@ async function registerRoutes(fastify, option) {
       console.error("Admin register failed:", err);
       // If email sending failed, transaction aborted → no dangling record
       return res
-        .code(502)
+        .code(500)
         .send({ message: "Failed to send verification email." });
     } finally {
       session.endSession();
