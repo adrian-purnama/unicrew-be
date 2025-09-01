@@ -47,28 +47,23 @@ async function startServer() {
     fastify.log.info("✅ MongoDB connected");
     console.log("✅ MongoDB connected");
 
-    // await fastify.register(require("@fastify/cors"), {
-    //   origin: (origin, cb) => {
-    //     const allowedOrigins = [
-    //       "https://unicrew.nusagitra.web.id",
-    //       "https://unikru.nusagitra.web.id",
-    //       "http://localhost:5173",
-    //     ];
-    //     if (!origin || allowedOrigins.includes(origin)) {
-    //       cb(null, true);
-    //       return;
-    //     }
-    //     cb(new Error("Not allowed"), false);
-    //   },
-    //   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    //   credentials: true,
-    // });
+ await fastify.register(require("@fastify/cors"), {
+  // Echo back only the allowed origins (safer than "*")
+  origin: (origin, cb) => {
+    const allowed = new Set([
+      "https://unikru.nusagitra.web.id",
+      "https://unicrew.nusagitra.web.id",
+      "http://localhost:5173",
+    ]);
+    if (!origin) return cb(null, true);           // same-origin or non-browser
+    cb(null, allowed.has(origin));
+  },
+  methods: ["GET","POST","PUT","DELETE","OPTIONS","PATCH"],
+  allowedHeaders: ["Content-Type", "Authorization"], // ← IMPORTANT
+  exposedHeaders: ["Content-Disposition"],           // optional, for downloads
+  credentials: false,                                 // keep false if you don’t use cookies
+});
 
-    await fastify.register(require("@fastify/cors"), {
-      origin: true,
-      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-      credentials: false,
-    });
 
     await fastify.register(swagger, {
       swagger: {
