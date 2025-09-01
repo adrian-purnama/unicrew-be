@@ -277,83 +277,89 @@ async function adminRoutes(fastify, options) {
         res.code(204).send();
     });
 
-    fastify.get("/sync-location", { preHandler: roleAuth(["admin"]) }, async (req, res) => {
+   fastify.get("/sync-location/stream", { preHandler: roleAuth(["admin"]) }, async (req, res) => {
+  // SSE headers via plugin
+  res.sse({
+    event: "start",
+    data: JSON.stringify({ message: "Starting location sync…" }),
+  });
+
+  // utility to emit progress
+  const send = (event, payload) => res.sse({ event, data: JSON.stringify(payload) });
+
+  try {
+    const provinsiRes = await axios.get("https://ibnux.github.io/data-indonesia/provinsi.json");
+    const provinsiList = provinsiRes.data || [];
+
+    const added = { provinsi: 0, kabupaten: 0, kecamatan: 0 };
+    // We’ll discover totals as we fetch (kab/kec unknown initially)
+    const totals = { provinsi: provinsiList.length, kabupaten: 0, kecamatan: 0 };
+    const done =   { provinsi: 0, kabupaten: 0, kecamatan: 0 };
+
+    send("totals", { totals });
+
+    for (const prov of provinsiList) {
+      send("status", { level: "provinsi", name: prov.nama });
+
+      let provDoc = await Provinsi.findOne({ name: prov.nama });
+      if (!provDoc) {
         try {
-            const provinsiRes = await axios.get(
-                "https://ibnux.github.io/data-indonesia/provinsi.json"
-            );
-            const provinsiList = provinsiRes.data;
+          provDoc = await Provinsi.create({ name: prov.nama });
+          added.provinsi++;
+        } catch {}
+      }
+      done.provinsi++;
+      send("progress", { done, totals, added });
 
-            let added = {
-                provinsi: 0,
-                kabupaten: 0,
-                kecamatan: 0,
-            };
+      // fetch kabupaten for this provinsi
+      const kabRes = await axios.get(`https://ibnux.github.io/data-indonesia/kabupaten/${prov.id}.json`);
+      const kabList = kabRes.data || [];
+      totals.kabupaten += kabList.length;
+      send("totals", { totals });
 
-            for (const prov of provinsiList) {
-                console.log(`🔁 Processing provinsi: ${prov.nama}`);
-                let provDoc = await Provinsi.findOne({ name: prov.nama });
-                if (!provDoc) {
-                    try {
-                        provDoc = await Provinsi.create({ name: prov.nama });
-                        added.provinsi++;
-                        console.log(`✅ Added provinsi: ${prov.nama}`);
-                    } catch (err) {
-                        console.warn(`⚠️ Skipped duplicate provinsi: ${prov.nama}`);
-                    }
-                }
+      for (const kab of kabList) {
+        send("status", { level: "kabupaten", name: kab.nama });
 
-                const kabRes = await axios.get(
-                    `https://ibnux.github.io/data-indonesia/kabupaten/${prov.id}.json`
-                );
-                const kabList = kabRes.data;
-
-                for (const kab of kabList) {
-                    console.log(`   🔁 Processing kabupaten: ${kab.nama}`);
-                    let kabDoc = await Kabupaten.findOne({ name: kab.nama });
-                    if (!kabDoc) {
-                        try {
-                            kabDoc = await Kabupaten.create({
-                                name: kab.nama,
-                                provinsi: provDoc._id,
-                            });
-                            added.kabupaten++;
-                            console.log(`   ✅ Added kabupaten: ${kab.nama}`);
-                        } catch (err) {
-                            console.warn(`   ⚠️ Skipped duplicate kabupaten: ${kab.nama}`);
-                        }
-                    }
-
-                    const kecRes = await axios.get(
-                        `https://ibnux.github.io/data-indonesia/kecamatan/${kab.id}.json`
-                    );
-                    const kecList = kecRes.data;
-
-                    for (const kec of kecList) {
-                        console.log(`      🔁 Processing kecamatan: ${kec.nama}`);
-                        let kecDoc = await Kecamatan.findOne({ name: kec.nama });
-                        if (!kecDoc) {
-                            try {
-                                kecDoc = await Kecamatan.create({
-                                    name: kec.nama,
-                                    kabupaten: kabDoc._id,
-                                });
-                                added.kecamatan++;
-                                console.log(`      ✅ Added kecamatan: ${kec.nama}`);
-                            } catch (err) {
-                                console.warn(`      ⚠️ Skipped duplicate kecamatan: ${kec.nama}`);
-                            }
-                        }
-                    }
-                }
-            }
-
-            return res.send({ message: "✅ Sync complete", added });
-        } catch (err) {
-            console.error("❌ Sync failed:", err);
-            return res.code(500).send({ message: "❌ Sync failed", error: err.message });
+        let kabDoc = await Kabupaten.findOne({ name: kab.nama });
+        if (!kabDoc) {
+          try {
+            kabDoc = await Kabupaten.create({ name: kab.nama, provinsi: provDoc._id });
+            added.kabupaten++;
+          } catch {}
         }
-    });
+        done.kabupaten++;
+        send("progress", { done, totals, added });
+
+        // fetch kecamatan for this kabupaten
+        const kecRes = await axios.get(`https://ibnux.github.io/data-indonesia/kecamatan/${kab.id}.json`);
+        const kecList = kecRes.data || [];
+        totals.kecamatan += kecList.length;
+        send("totals", { totals });
+
+        for (const kec of kecList) {
+          send("status", { level: "kecamatan", name: kec.nama });
+
+          let kecDoc = await Kecamatan.findOne({ name: kec.nama });
+          if (!kecDoc) {
+            try {
+              await Kecamatan.create({ name: kec.nama, kabupaten: kabDoc._id });
+              added.kecamatan++;
+            } catch {}
+          }
+          done.kecamatan++;
+          // throttle emits a bit if you like; here we send every step
+          send("progress", { done, totals, added });
+        }
+      }
+    }
+
+    send("done", { message: "Sync complete", added, totals, done });
+    res.sseContext.source.end(); // close stream
+  } catch (err) {
+    send("error", { message: err.message || "Sync failed" });
+    res.sseContext.source.end();
+  }
+});
 }
 
 module.exports = adminRoutes;

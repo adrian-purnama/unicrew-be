@@ -89,6 +89,8 @@ async function startServer() {
       transformStaticCSP: (header) => header,
     });
     fastify.register(fastifyMultipart);
+    await fastify.register(require('fastify-sse-v2'));
+
 
     fastify.get("/test", async () => {
       return { message: "hehe" };
