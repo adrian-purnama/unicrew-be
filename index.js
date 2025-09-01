@@ -1,6 +1,6 @@
 const fastify = require("fastify")({
   logger: {
-    level: "error", 
+    level: "error",
     transport: {
       target: "pino-pretty",
       options: {
@@ -12,7 +12,6 @@ const fastify = require("fastify")({
     },
   },
 });
-
 
 const fastifyMultipart = require("@fastify/multipart");
 const mongoose = require("mongoose");
@@ -48,12 +47,11 @@ async function startServer() {
     fastify.log.info("✅ MongoDB connected");
     console.log("✅ MongoDB connected");
 
-
     // await fastify.register(require("@fastify/cors"), {
     //   origin: (origin, cb) => {
     //     const allowedOrigins = [
     //       "https://unicrew.nusagitra.web.id",
-    //       "https://unikru.nusagitra.web.id",  
+    //       "https://unikru.nusagitra.web.id",
     //       "http://localhost:5173",
     //     ];
     //     if (!origin || allowedOrigins.includes(origin)) {
@@ -67,10 +65,10 @@ async function startServer() {
     // });
 
     await fastify.register(require("@fastify/cors"), {
-  origin: true,          // reflect request origin, or use "*" for literal wildcard
-  methods: ["GET","POST","PUT","DELETE","OPTIONS","PATCH"],
-  credentials: false,    // set false if you don’t need cookies/Authorization
-});
+      origin: true,
+      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+      credentials: false,
+    });
 
     await fastify.register(swagger, {
       swagger: {
@@ -95,11 +93,10 @@ async function startServer() {
       transformStaticCSP: (header) => header,
     });
     fastify.register(fastifyMultipart);
-    await fastify.register(require('fastify-sse-v2'));
-
+    await fastify.register(require("fastify-sse-v2"));
 
     fastify.get("/test", async () => {
-      return { message: "hehe" };
+      return { message: "back end ver 1.0.5" };
     });
 
     //routes
@@ -112,13 +109,13 @@ async function startServer() {
     await fastify.register(userRoutes, { prefix: "/user" });
     await fastify.register(companyRoutes, { prefix: "/company" });
     await fastify.register(notificationRoutes, { prefix: "/notification" });
-    
+
     await fastify.register(applicationRoutes, { prefix: "/applicant" });
     await fastify.register(jobRoutes, { prefix: "/job" });
     await fastify.register(saveRoutes, { prefix: "/save" });
     await fastify.register(reviewRoutes, { prefix: "/review" });
     await fastify.register(assetRoutes);
-    
+
     await fastify.register(chatSocket);
     await fastify.register(chatRoutes, { prefix: "/chat" });
 
