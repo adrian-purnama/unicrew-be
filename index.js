@@ -91,7 +91,7 @@ async function startServer() {
     await fastify.register(require("fastify-sse-v2"));
 
     fastify.get("/test", async () => {
-      return { message: "back end ver 1.0.6" };
+      return { message: "back end ver 1.0.7" };
     });
 
     //routes
