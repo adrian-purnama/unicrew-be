@@ -196,7 +196,7 @@ async function authRoutes(fastify, option) {
         return res.code(404).send({ message: "Account not found." });
       }
 
-      const token = await createOtp(user._id); // reuse your OTP/token function
+      const token = await createOtp(user._id);
       await sendForgotPasswordEmail(email, token, role);
 
       return res.code(200).send({ message: "Reset email sent." });

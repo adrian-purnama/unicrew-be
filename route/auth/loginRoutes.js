@@ -21,11 +21,17 @@ function loginRoutes(fastify, options) {
     const { email, password, role } = req.body;
 
     try {
-      console.log(role);
+      const lowerEmail = String(email || "")
+        .trim()
+        .toLowerCase();
+      if (!lowerEmail || lowerEmail.length > 50) {
+        return res.code(422).send({ message: "Invalid email." });
+      }
+
       const Model = roleModelMap[role];
       if (!Model) return res.code(400).send({ message: "Invalid role" });
 
-      const user = await Model.findOne({ email: email.toLowerCase().trim() });
+      const user = await Model.findOne({ email: lowerEmail });
       if (!user) return res.code(401).send({ message: "Account not found" });
 
       const isValid = await bcrypt.compare(password, user.password);

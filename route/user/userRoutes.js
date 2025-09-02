@@ -120,13 +120,11 @@ async function userRoutes(fastify, options) {
         const cvAsset        = c ? await createAsset({ userId, kind: FIELD_CONFIG.cv.kind,            visibility: FIELD_CONFIG.cv.visibility,            file: c }) : null;
         const portfolioAsset = f ? await createAsset({ userId, kind: FIELD_CONFIG.portfolio.kind,     visibility: FIELD_CONFIG.portfolio.visibility,     file: f }) : null;
 
-        // Build updates (NOTE: these fields are ObjectId refs in your schema)
         const updates = { ...req.body };
 
-        // Replace old assets, then point user to new Asset IDs
         if (avatarAsset) {
           await deleteAssetById(user.profilePicture);
-          updates.profilePicture = avatarAsset._id;      // <-- ObjectId ref
+          updates.profilePicture = avatarAsset._id;
         }
         if (cvAsset) {
           await deleteAssetById(user.curriculumVitae);

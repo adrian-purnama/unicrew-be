@@ -1,5 +1,5 @@
 
-
+// TODO overall sudah oke, bisa di improve cuma udah oke
 const Industry = require("../../schema/industrySchema");
 const Skill = require("../../schema/skillSchema");
 const Provinsi = require("../../schema/provinsiSchema");
@@ -278,13 +278,11 @@ async function adminRoutes(fastify, options) {
     });
 
    fastify.get("/sync-location/new", { preHandler: roleAuth(["admin"]) }, async (req, res) => {
-  // SSE headers via plugin
   res.sse({
     event: "start",
     data: JSON.stringify({ message: "Starting location sync…" }),
   });
 
-  // utility to emit progress
   const send = (event, payload) => res.sse({ event, data: JSON.stringify(payload) });
 
   try {
@@ -292,7 +290,6 @@ async function adminRoutes(fastify, options) {
     const provinsiList = provinsiRes.data || [];
 
     const added = { provinsi: 0, kabupaten: 0, kecamatan: 0 };
-    // We’ll discover totals as we fetch (kab/kec unknown initially)
     const totals = { provinsi: provinsiList.length, kabupaten: 0, kecamatan: 0 };
     const done =   { provinsi: 0, kabupaten: 0, kecamatan: 0 };
 
@@ -311,7 +308,6 @@ async function adminRoutes(fastify, options) {
       done.provinsi++;
       send("progress", { done, totals, added });
 
-      // fetch kabupaten for this provinsi
       const kabRes = await axios.get(`https://ibnux.github.io/data-indonesia/kabupaten/${prov.id}.json`);
       const kabList = kabRes.data || [];
       totals.kabupaten += kabList.length;
@@ -330,7 +326,6 @@ async function adminRoutes(fastify, options) {
         done.kabupaten++;
         send("progress", { done, totals, added });
 
-        // fetch kecamatan for this kabupaten
         const kecRes = await axios.get(`https://ibnux.github.io/data-indonesia/kecamatan/${kab.id}.json`);
         const kecList = kecRes.data || [];
         totals.kecamatan += kecList.length;
@@ -347,14 +342,13 @@ async function adminRoutes(fastify, options) {
             } catch {}
           }
           done.kecamatan++;
-          // throttle emits a bit if you like; here we send every step
           send("progress", { done, totals, added });
         }
       }
     }
 
     send("done", { message: "Sync complete", added, totals, done });
-    res.sseContext.source.end(); // close stream
+    res.sseContext.source.end(); 
   } catch (err) {
     send("error", { message: err.message || "Sync failed" });
     res.sseContext.source.end();

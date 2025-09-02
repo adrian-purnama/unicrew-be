@@ -37,6 +37,7 @@ const assetRoutes = require("./route/asset/assetRoutes");
 
 dotenv.config();
 const MONGODB_URI = process.env.MONGODB_LINK;
+const FE_LINK = process.env.FE_LINK;
 
 async function startServer() {
   try {
@@ -48,20 +49,17 @@ async function startServer() {
     console.log("✅ MongoDB connected");
 
  await fastify.register(require("@fastify/cors"), {
-  // Echo back only the allowed origins (safer than "*")
   origin: (origin, cb) => {
     const allowed = new Set([
-      "https://unikru.nusagitra.web.id",
-      "https://unicrew.nusagitra.web.id",
-      "http://localhost:5173",
+      FE_LINK
     ]);
-    if (!origin) return cb(null, true);           // same-origin or non-browser
+    if (!origin) return cb(null, true);
     cb(null, allowed.has(origin));
   },
   methods: ["GET","POST","PUT","DELETE","OPTIONS","PATCH"],
-  allowedHeaders: ["Content-Type", "Authorization"], // ← IMPORTANT
-  exposedHeaders: ["Content-Disposition"],           // optional, for downloads
-  credentials: false,                                 // keep false if you don’t use cookies
+  allowedHeaders: ["Content-Type", "Authorization"],
+  exposedHeaders: ["Content-Disposition"],
+  credentials: false,
 });
 
 

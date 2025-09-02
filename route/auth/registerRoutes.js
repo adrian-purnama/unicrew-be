@@ -30,7 +30,9 @@ const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS || 10);
 const sendWithTimeout = (fn, ms = 8000) =>
   Promise.race([
     fn(),
-    new Promise((_, rej) => setTimeout(() => rej(new Error("email-timeout")), ms)),
+    new Promise((_, rej) =>
+      setTimeout(() => rej(new Error("email-timeout")), ms)
+    ),
   ]);
 
 async function registerRoutes(fastify) {
@@ -41,19 +43,24 @@ async function registerRoutes(fastify) {
       const lowerEmail = email.toLowerCase().trim();
 
       const exist = await Admin.findOne({ email: lowerEmail });
-      if (exist) return res.code(409).send({ message: "Admin already registered" });
+      if (exist)
+        return res.code(409).send({ message: "Admin already registered" });
 
       const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
-      const admin = await Admin.create({ email: lowerEmail, password: hashedPassword });
+      const admin = await Admin.create({
+        email: lowerEmail,
+        password: hashedPassword,
+      });
 
       try {
         const otp = await createOtp(admin._id);
         await sendWithTimeout(() => sendVerifyEmail(admin.email, otp, "admin"));
       } catch (e) {
-        // compensation: remove created admin if email fails
         await Admin.deleteOne({ _id: admin._id }).catch(() => {});
         console.error("[/register/admin] email failed:", e?.message || e);
-        return res.code(500).send({ message: "Failed to send verification email." });
+        return res
+          .code(500)
+          .send({ message: "Failed to send verification email." });
       }
 
       return res
@@ -65,7 +72,8 @@ async function registerRoutes(fastify) {
     }
   });
 
-  // ---------- USER REGISTER (no transactions) ----------
+  // ---------- USER REGISTER ----------
+    // TODO chech front end max car email 50 and ends with ac.id or .edu
   fastify.post("/user", { schema: userRegisterDto }, async (req, res) => {
     const {
       fullName,
@@ -79,17 +87,38 @@ async function registerRoutes(fastify) {
       kabupatenId,
       kecamatanId,
       kelurahanId,
-      industries,
     } = req.body;
 
     try {
-      if (!email || !password || !fullName || !universityId || !studyProgramId) {
+      //check
+      if (
+        !email ||
+        !password ||
+        !fullName ||
+        !universityId ||
+        !studyProgramId
+      ) {
         return res.code(400).send({ message: "Missing required fields." });
       }
 
+      // check email
       const lowerEmail = email.toLowerCase().trim();
+      if (!lowerEmail || lowerEmail.length > 50) {
+        return res.code(422).send({ message: "Invalid email." });
+      }
+      const academicEmailRe =
+        /^(?!.*\.\.)[A-Za-z0-9](?:[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{0,62}[A-Za-z0-9])?@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+(?:ac\.id|edu)$/i;
+
+      if (!academicEmailRe.test(lowerEmail)) {
+        return res.code(422).send({
+          message: "Email must be valid and end with .ac.id or .edu.",
+        });
+      }
+
+      const lowerFullName = fullName.toLowerCase().trim();
       const exist = await User.findOne({ email: lowerEmail });
-      if (exist) return res.code(409).send({ message: "User already registered" });
+      if (exist)
+        return res.code(409).send({ message: "User already registered" });
 
       // Validate selections
       const { universityId: uniId, university } =
@@ -102,9 +131,8 @@ async function registerRoutes(fastify) {
         kecamatanId,
         kelurahanId,
       });
-      const industryIds = await validateIndustrySelection(industries);
 
-      // birthDate
+      // birthDate parse
       let birthDateISO;
       if (birthDate) {
         const d = new Date(birthDate);
@@ -118,7 +146,7 @@ async function registerRoutes(fastify) {
 
       // Create user
       const user = await User.create({
-        fullName,
+        lowerFullName,
         birthDate: birthDateISO,
         email: lowerEmail,
         password: hashedPassword,
@@ -126,11 +154,10 @@ async function registerRoutes(fastify) {
         studyProgram: spId,
         externalSystemId,
         ...locationIds,
-        industries: industryIds?.length ? industryIds : undefined,
         isVerified: false,
       });
 
-      // Create token (pre-verification)
+      // Create token
       const token = jwt.sign(
         {
           _id: user._id,
@@ -140,7 +167,7 @@ async function registerRoutes(fastify) {
           profilePicture: user.profilePicture,
         },
         jwtSecret,
-        { expiresIn: "7d" }
+        { expiresIn: "1d" }
       );
 
       // Send email; if fails, delete the user
@@ -150,7 +177,9 @@ async function registerRoutes(fastify) {
       } catch (e) {
         await User.deleteOne({ _id: user._id }).catch(() => {});
         console.error("[/register/user] email failed:", e?.message || e);
-        return res.code(500).send({ message: "Failed to send verification email." });
+        return res
+          .code(500)
+          .send({ message: "Failed to send verification email." });
       }
 
       let daysRemaining;
@@ -182,7 +211,11 @@ async function registerRoutes(fastify) {
         },
       });
     } catch (err) {
-      if (err && typeof err.message === "string" && /does not|belong|Invalid/i.test(err.message)) {
+      if (
+        err &&
+        typeof err.message === "string" &&
+        /does not|belong|Invalid/i.test(err.message)
+      ) {
         return res.code(422).send({ message: err.message });
       }
       console.error("[/register/user] failed:", err?.message || err);
@@ -191,6 +224,7 @@ async function registerRoutes(fastify) {
   });
 
   // ---------- COMPANY REGISTER (no transactions) ----------
+  // TODO chekc front end max car des 200 and email 50
   fastify.post("/company", { schema: companyRegisterDto }, async (req, res) => {
     const {
       companyName,
@@ -203,9 +237,19 @@ async function registerRoutes(fastify) {
     } = req.body;
 
     try {
+      // lower name and check email
+      const lowerCompanyName = companyName.toLowerCase().trim();
       const lowerEmail = (email || "").toLowerCase().trim();
+      if (!lowerEmail || lowerEmail.length > 50) {
+        return res.code(422).send({ message: "Invalid email." });
+      }
+      if (!description || description.length > 200) {
+        return res.code(422).send({ message: "Invalid Description." });
+      }
+
       const exist = await Company.findOne({ email: lowerEmail });
-      if (exist) return res.code(409).send({ message: "Company already registered" });
+      if (exist)
+        return res.code(409).send({ message: "Company already registered" });
 
       const industryIds = await validateIndustrySelection(industries);
       const locInput = location && typeof location === "object" ? location : {};
@@ -219,7 +263,7 @@ async function registerRoutes(fastify) {
       const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
       const company = await Company.create({
-        companyName,
+        lowerCompanyName,
         industries: industryIds,
         description,
         ...locationIds,
@@ -231,16 +275,26 @@ async function registerRoutes(fastify) {
 
       try {
         const otp = await createOtp(company._id);
-        await sendWithTimeout(() => sendVerifyEmail(company.email, otp, "company"));
+        await sendWithTimeout(() =>
+          sendVerifyEmail(company.email, otp, "company")
+        );
       } catch (e) {
         await Company.deleteOne({ _id: company._id }).catch(() => {});
         console.error("[/register/company] email failed:", e?.message || e);
-        return res.code(500).send({ message: "Failed to send verification email." });
+        return res
+          .code(500)
+          .send({ message: "Failed to send verification email." });
       }
 
-      return res.code(201).send({ message: "Company registered, please verify email" });
+      return res
+        .code(201)
+        .send({ message: "Company registered, please verify email" });
     } catch (err) {
-      if (err && typeof err.message === "string" && /does not|belong|Invalid/i.test(err.message)) {
+      if (
+        err &&
+        typeof err.message === "string" &&
+        /does not|belong|Invalid/i.test(err.message)
+      ) {
         return res.code(422).send({ message: err.message });
       }
       console.error("[/register/company] failed:", err?.message || err);
