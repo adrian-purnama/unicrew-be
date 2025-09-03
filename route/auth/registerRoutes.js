@@ -146,7 +146,7 @@ async function registerRoutes(fastify) {
 
       // Create user
       const user = await User.create({
-        lowerFullName,
+        fullName : lowerFullName,
         birthDate: birthDateISO,
         email: lowerEmail,
         password: hashedPassword,
@@ -263,7 +263,7 @@ async function registerRoutes(fastify) {
       const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
       const company = await Company.create({
-        lowerCompanyName,
+        companyName:lowerCompanyName,
         industries: industryIds,
         description,
         ...locationIds,
