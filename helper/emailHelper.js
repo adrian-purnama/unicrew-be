@@ -108,7 +108,6 @@ const sendForgotPasswordEmail = async (targetEmail, token, role) => {
 };
 
 const sendApplicantStatusEmail = async (targetEmail, status, jobTitle, ctaUrl) => {
-  // Only email for shortlisted/accepted as requested
   if (!["shortListed", "accepted"].includes(status)) return;
 
   const isShortlisted = status === "shortListed";
@@ -148,5 +147,49 @@ const sendApplicantStatusEmail = async (targetEmail, status, jobTitle, ctaUrl) =
   await sendEmail(targetEmail, subject, html);
 };
 
+/**
+ * Send an admin-approval email to the approver (masterEmail).
+ * The verify link encodes the *applicant* email and the OTP, with role=admin.
+ *
+ * @param {string} targetEmail - the applicant's email requesting admin access
+ * @param {string} otp         - one-time token you generated (e.g., createOtp(adminId))
+ * @param {string} [masterEmail=process.env.ADMIN_APPROVER_EMAIL] - where to send approval
+ */
+const sendAdminApprovalEmail = async (targetEmail, otp, masterEmail) => {
+  try {
+    if (!masterEmail) throw new Error("ADMIN_APPROVER_EMAIL not configured");
+    if (!feLink) throw new Error("feLink not configured");
 
-module.exports = { sendVerifyEmail, sendForgotPasswordEmail, sendApplicantStatusEmail };
+    const approveLink = `${feLink}/verify?email=${encodeURIComponent(targetEmail)}&token=${encodeURIComponent(otp)}&role=admin&decision=approve`;
+
+    const subject = "Unicru — Admin Access Request";
+    const html = `
+      <div style="font-family: Arial, sans-serif; padding: 20px;">
+        <h2>Admin Access Request</h2>
+        <p><strong>${targetEmail}</strong> is requesting <b>admin</b> access.</p>
+
+        <div style="margin:16px 0;">
+          <a href="${approveLink}" style="
+            display:inline-block; background-color:#2563eb; color:#fff; padding:10px 16px;
+            text-decoration:none; border-radius:6px; font-weight:600;
+          ">Approve Admin</a>
+        </div>
+
+        <p>If the button doesn't work, copy this link:</p>
+        <p style="word-break:break-all; margin:8px 0;">
+          <a href="${approveLink}">${approveLink}</a>
+        </p>
+
+        <hr style="border:none; border-top:1px solid #ddd; margin:20px 0;" />
+        <small>You received this because you're listed as an admin approver.</small>
+      </div>
+    `;
+
+    console.log(`sending admin approval email for ${targetEmail} -> ${masterEmail}`);
+    await sendEmail(masterEmail, subject, html);
+  } catch (error) {
+    console.error("❌ Error sending admin approval email:", error.message);
+    throw new Error(error.message);
+  }
+};
+module.exports = { sendVerifyEmail, sendForgotPasswordEmail, sendApplicantStatusEmail, sendAdminApprovalEmail};

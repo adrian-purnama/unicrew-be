@@ -1,5 +1,5 @@
 // routes/registerRoutes.js
-const { sendVerifyEmail } = require("../../helper/emailHelper");
+const { sendVerifyEmail, sendAdminApprovalEmail } = require("../../helper/emailHelper");
 const { createOtp } = require("../../helper/otpHelper");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
@@ -24,7 +24,8 @@ const {
 } = require("./dto");
 
 const jwtSecret = process.env.JWT_SECRET;
-const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS || 10);
+const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS);
+const GMAIL_MASTER = process.env.GMAIL_MASTER
 
 // Small helper: don’t let email sending hang forever
 const sendWithTimeout = (fn, ms = 8000) =>
@@ -54,7 +55,7 @@ async function registerRoutes(fastify) {
 
       try {
         const otp = await createOtp(admin._id);
-        await sendWithTimeout(() => sendVerifyEmail(admin.email, otp, "admin"));
+        await sendWithTimeout(() => sendAdminApprovalEmail(admin.email, otp, GMAIL_MASTER));
       } catch (e) {
         await Admin.deleteOne({ _id: admin._id }).catch(() => {});
         console.error("[/register/admin] email failed:", e?.message || e);
