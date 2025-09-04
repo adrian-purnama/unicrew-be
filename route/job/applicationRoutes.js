@@ -33,6 +33,17 @@ module.exports = async function (fastify) {
     async (req, res) => {
       const userId = req.userId;
       const { jobId } = req.body;
+      
+      const user = await User.findById(userId).select("isVerified email").lean();
+      if (!user) {
+        return res.code(401).send({ message: "User not found." });
+      }
+      if (!user.isVerified) {
+        return res.code(403).send({
+          message: "Please verify your email before applying.",
+          action: "verify_required", // optional hint for frontend
+        });
+      }
 
       const existing = await Application.findOne({ user: userId, job: jobId });
       if (existing) {

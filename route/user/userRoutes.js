@@ -2,15 +2,14 @@ const multer = require("fastify-multer");
 const path = require("path");
 const fs = require("fs");
 const User = require("../../schema/userSchema");
-const { uploadFile, deleteFile } = require("../../helper/googleDrive");
-
 const { roleAuth } = require("../../helper/roleAuth");
 const dotenv = require("dotenv");
 const { isUserProfileComplete } = require("../../helper/userHelper");
-const { userProfileDto } = require("./dto");
 const { uploadToGridFS, deleteFromGridFS } = require("../../helper/gridfsHelper");
 const Asset = require("../../schema/assetSchema");
 const { verifyAndBuildAssetLink } = require("../../helper/assetAuth");
+const { default: mongoose } = require("mongoose");
+const Application = require("../../schema/applicationSchema");
 dotenv.config();
 
 const profileFolderId = process.env.GDRIVE_FOLDER_PROFILE;
@@ -223,6 +222,52 @@ fastify.get(
     return res.send(userObj);
   }
 );
+
+ fastify.get(
+    "/my-counts",
+    { preHandler: roleAuth(["user"]) },
+    async (req, res) => {
+      const oid = new mongoose.Types.ObjectId(req.userId);
+
+      try {
+        const [agg] = await Application.aggregate([
+          { $match: { user: oid } },
+          {
+            $facet: {
+              applied: [{ $match: { status: "applied" } }, { $count: "n" }],
+              shortListed: [{ $match: { status: "shortListed" } }, { $count: "n" }],
+              accepted: [{ $match: { status: "accepted" } }, { $count: "n" }],
+              review: [
+                {
+                  $match: {
+                    status: { $in: ["ended", "accepted"] },
+                    userReviewed: { $ne: true },
+                  },
+                },
+                { $count: "n" },
+              ],
+            },
+          },
+          {
+            $project: {
+              applied: { $ifNull: [{ $arrayElemAt: ["$applied.n", 0] }, 0] },
+              shortListed: { $ifNull: [{ $arrayElemAt: ["$shortListed.n", 0] }, 0] },
+              accepted: { $ifNull: [{ $arrayElemAt: ["$accepted.n", 0] }, 0] },
+              review: { $ifNull: [{ $arrayElemAt: ["$review.n", 0] }, 0] },
+            },
+          },
+          { $addFields: { pending: { $add: ["$applied", "$shortListed"] } } },
+        ]);
+
+        res.send(
+          agg || { applied: 0, shortListed: 0, pending: 0, accepted: 0, review: 0 }
+        );
+      } catch (err) {
+        req.log.error(err, "Failed to aggregate counters");
+        res.code(500).send({ message: "Failed to fetch counters" });
+      }
+    }
+  );
 
 }
 
