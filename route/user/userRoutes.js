@@ -6,7 +6,6 @@ const { roleAuth } = require("../../helper/roleAuth");
 const dotenv = require("dotenv");
 const {
   isUserProfileComplete,
-  normalizeSkillName,
 } = require("../../helper/userHelper");
 const {
   uploadToGridFS,
@@ -17,6 +16,7 @@ const { verifyAndBuildAssetLink } = require("../../helper/assetAuth");
 const { default: mongoose } = require("mongoose");
 const Application = require("../../schema/applicationSchema");
 const Skill = require("../../schema/skillSchema");
+const { normalizeName } = require("../../helper/normalizeHelper");
 dotenv.config();
 
 const profileFolderId = process.env.GDRIVE_FOLDER_PROFILE;
@@ -383,7 +383,7 @@ async function userRoutes(fastify, options) {
       const results = [];
 
       for (const rawName of names) {
-        const normName = normalizeSkillName(rawName);
+        const normName = normalizeName(rawName);
         console.log(normName)
         let skill;
 

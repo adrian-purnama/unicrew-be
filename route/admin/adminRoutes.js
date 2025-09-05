@@ -17,12 +17,11 @@ const {
   kelurahanDto,
 } = require("./dto");
 const { default: axios } = require("axios");
-const universitySchema = require("../../schema/universitySchema");
 const { roleAuth } = require("../../helper/roleAuth");
-const { normalizeSkillName } = require("../../helper/userHelper");
 const Company = require("../../schema/companySchema");
 const User = require("../../schema/userSchema");
 const Review = require("../../schema/reviewSchema");
+const { normalizeName, escapeRegex, buildFuzzyQueryOnNormName } = require("../../helper/normalizeHelper");
 
 function toBool(v) {
   if (v === undefined) return undefined;
@@ -44,35 +43,58 @@ function regexOrNull(q) {
   return new RegExp(esc, "i");
 }
 
-function escRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
 async function adminRoutes(fastify, options) {
-  fastify.post(
-    "/study-program",
-    { preHandler: roleAuth(["admin"]) },
-    async (req, res) => {
-      const program = await new StudyProgram({ name: req.body.name }).save();
-      res.code(201).send(program);
-    }
-  );
+fastify.post(
+  "/study-program",
+  { preHandler: roleAuth(["admin"]) },
+  async (req, res) => {
+    const name = (req.body.name || "").trim();
+    if (!name) return res.code(400).send({ message: "Name is required" });
+    const normName = normalizeName(name);
 
-  fastify.get("/study-program", async (req, res) => {
-    const list = await StudyProgram.find();
-    res.send(list);
-  });
+    const dup = await StudyProgram.findOne({ normName }).lean();
+    if (dup) return res.code(409).send({ message: "Study program already exists" });
 
-  fastify.put(
-    "/study-program/:id",
-    { preHandler: roleAuth(["admin"]) },
-    async (req, res) => {
-      const updated = await StudyProgram.findByIdAndUpdate(
-        req.params.id,
-        { name: req.body.name },
-        { new: true }
-      );
-      res.send(updated);
-    }
-  );
+    const program = await new StudyProgram({ name, normName }).save();
+    res.code(201).send(program);
+  }
+);
+
+fastify.get("/study-program", async (req, res) => {
+  const q = (req.query.q || "").trim();
+  const filter = q ? buildFuzzyQueryOnNormName(q) : {};
+  const list = await StudyProgram.find(filter).sort({ normName: 1 }).lean();
+  res.send(list);
+});
+
+fastify.get("/study-program/search", async (req, res) => {
+  const q = (req.query.q || "").trim();
+  const filter = q ? buildFuzzyQueryOnNormName(q) : {};
+  const list = await StudyProgram.find(filter).sort({ normName: 1 }).limit(50).lean();
+  res.send(list);
+});
+
+fastify.put(
+  "/study-program/:id",
+  { preHandler: roleAuth(["admin"]) },
+  async (req, res) => {
+    const name = (req.body.name || "").trim();
+    if (!name) return res.code(400).send({ message: "Name is required" });
+    const normName = normalizeName(name);
+
+    const clash = await StudyProgram.findOne({ _id: { $ne: req.params.id }, normName }).lean();
+    if (clash) return res.code(409).send({ message: "Another study program with this name exists" });
+
+    const updated = await StudyProgram.findByIdAndUpdate(
+      req.params.id,
+      { name, normName },
+      { new: true }
+    );
+    if (!updated) return res.code(404).send({ message: "Not found" });
+    res.send(updated);
+  }
+);
 
   fastify.delete(
     "/study-program/:id",
@@ -84,38 +106,73 @@ async function adminRoutes(fastify, options) {
   );
 
   // UNIVERSITY
-  fastify.post(
-    "/university",
-    { preHandler: roleAuth(["admin"]) },
-    async (req, res) => {
-      const { name, speciality } = req.body;
-      const existing = await University.findOne({ name });
-      if (existing)
-        return res.code(400).send({ message: "University already exists" });
+fastify.post(
+  "/university",
+  { preHandler: roleAuth(["admin"]) },
+  async (req, res) => {
+    const name = (req.body.name || "").trim();
+    const speciality = Array.isArray(req.body.speciality) ? req.body.speciality : [];
+    if (!name) return res.code(400).send({ message: "University name is required" });
 
-      const university = await University.create({ name, speciality });
-      res.code(201).send(university);
+    const normName = normalizeName(name);
+    const dup = await University.findOne({ normName }).lean();
+    if (dup) return res.code(409).send({ message: "University already exists" });
+
+    const university = await University.create({ name, normName, speciality });
+    await university.populate("speciality", "name");
+    res.code(201).send(university);
+  }
+);
+
+fastify.get("/university", async (req, res) => {
+  const q = (req.query.q || "").trim();
+  const filter = q ? buildFuzzyQueryOnNormName(q) : {};
+  const universities = await University.find(filter)
+    .sort({ normName: 1 })
+    .populate("speciality", "name")
+    .lean();
+  res.send(universities);
+});
+
+fastify.get("/university/search", async (req, res) => {
+  const q = (req.query.q || "").trim();
+  const filter = q ? buildFuzzyQueryOnNormName(q) : {};
+  const universities = await University.find(filter)
+    .sort({ normName: 1 })
+    .limit(50)
+    .populate("speciality", "name")
+    .lean();
+  res.send(universities);
+});
+
+fastify.put(
+  "/university/:id",
+  { preHandler: roleAuth(["admin"]) },
+  async (req, res) => {
+    const update = {};
+    if (typeof req.body.name === "string") {
+      const name = req.body.name.trim();
+      if (!name) return res.code(400).send({ message: "Name cannot be empty" });
+      update.name = name;
+      update.normName = normalizeName(name);
+
+      const clash = await University.findOne({
+        _id: { $ne: req.params.id },
+        normName: update.normName,
+      }).lean();
+      if (clash) return res.code(409).send({ message: "Another university with this name exists" });
     }
-  );
-
-  fastify.get("/university", async (req, res) => {
-    const universities = await University.find().populate("speciality");
-    res.send(universities);
-  });
-
-  fastify.put(
-    "/university/:id",
-    { preHandler: roleAuth(["admin"]) },
-    async (req, res) => {
-      const { name, speciality } = req.body;
-      const updated = await University.findByIdAndUpdate(
-        req.params.id,
-        { name, speciality },
-        { new: true }
-      );
-      res.send(updated);
+    if (Array.isArray(req.body.speciality)) {
+      update.speciality = req.body.speciality;
     }
-  );
+
+    const updated = await University.findByIdAndUpdate(req.params.id, update, { new: true })
+      .populate("speciality", "name")
+      .lean();
+    if (!updated) return res.code(404).send({ message: "University not found" });
+    res.send(updated);
+  }
+);
 
   fastify.delete(
     "/university/:id",
@@ -127,27 +184,42 @@ async function adminRoutes(fastify, options) {
   );
 
   // INDUSTRY
-  fastify.post(
-    "/industry",
-    { preHandler: roleAuth(["admin"]), schema: industryDto },
-    async (req, res) => {
-      const industry = await new Industry({ name: req.body.name }).save();
-      res.code(201).send(industry);
-    }
-  );
+fastify.post(
+  "/industry",
+  { preHandler: roleAuth(["admin"]), schema: industryDto },
+  async (req, res) => {
+    const name = (req.body.name || "").trim();
+    if (!name) return res.code(400).send({ message: "Name is required" });
+    const normName = normalizeName(name);
 
-  fastify.put(
-    "/industry/:id",
-    { preHandler: roleAuth(["admin"]), schema: industryDto },
-    async (req, res) => {
-      const updated = await Industry.findByIdAndUpdate(
-        req.params.id,
-        { name: req.body.name },
-        { new: true }
-      );
-      res.send(updated);
-    }
-  );
+    const dup = await Industry.findOne({ normName }).lean();
+    if (dup) return res.code(409).send({ message: "Industry already exists" });
+
+    const industry = await new Industry({ name, normName }).save();
+    res.code(201).send(industry);
+  }
+);
+
+fastify.put(
+  "/industry/:id",
+  { preHandler: roleAuth(["admin"]), schema: industryDto },
+  async (req, res) => {
+    const name = (req.body.name || "").trim();
+    if (!name) return res.code(400).send({ message: "Name is required" });
+    const normName = normalizeName(name);
+
+    const clash = await Industry.findOne({ _id: { $ne: req.params.id }, normName }).lean();
+    if (clash) return res.code(409).send({ message: "Another industry with this name exists" });
+
+    const updated = await Industry.findByIdAndUpdate(
+      req.params.id,
+      { name, normName },
+      { new: true }
+    );
+    if (!updated) return res.code(404).send({ message: "Not found" });
+    res.send(updated);
+  }
+);
 
   fastify.delete(
     "/industry/:id",
@@ -158,25 +230,19 @@ async function adminRoutes(fastify, options) {
     }
   );
 
-  fastify.get("/industry", async (req, res) => {
-    const data = await Industry.find();
-    res.send(data);
-  });
+fastify.get("/industry", async (req, res) => {
+  const q = (req.query.q || "").trim();
+  const filter = q ? buildFuzzyQueryOnNormName(q) : {};
+  const data = await Industry.find(filter).sort({ normName: 1 }).lean();
+  res.send(data);
+});
 
-  fastify.get("/industry/search", async (req, res) => {
-    const q = (req.query.q || "").trim();
-
-    const filter = q
-      ? {
-          name: {
-            $regex: new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"),
-          },
-        }
-      : {};
-
-    const industries = await Industry.find(filter).limit(10).sort({ name: 1 });
-    res.send(industries);
-  });
+fastify.get("/industry/search", async (req, res) => {
+  const q = (req.query.q || "").trim();
+  const filter = q ? buildFuzzyQueryOnNormName(q) : {};
+  const industries = await Industry.find(filter).sort({ normName: 1 }).limit(50).lean();
+  res.send(industries);
+});
 
   // SKILL
   fastify.post(
@@ -186,7 +252,7 @@ async function adminRoutes(fastify, options) {
       const raw = (req.body?.name || "").trim();
       if (!raw) return res.code(400).send({ message: "name is required" });
 
-      const normName = normalizeSkillName(raw);
+      const normName = normalizeName(raw);
 
       try {
         const skill = await Skill.create({
@@ -215,7 +281,7 @@ async function adminRoutes(fastify, options) {
       const raw = (req.body?.name || "").trim();
       if (!raw) return res.code(400).send({ message: "name is required" });
 
-      const normName = normalizeSkillName(raw);
+      const normName = normalizeName(raw);
 
       try {
         const updated = await Skill.findByIdAndUpdate(
@@ -280,7 +346,7 @@ async function adminRoutes(fastify, options) {
       return res.send(top);
     }
 
-    const norm = normalizeSkillName(q);
+    const norm = normalizeName(q);
     const esc = norm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const re = new RegExp("^" + esc, "i");
 
@@ -641,7 +707,7 @@ fastify.get("/reviews", { preHandler: roleAuth(["admin"]) }, async (req, res) =>
   if (q) {
     // 2) If searching, fetch all, filter in memory, then paginate slice
     const all = await baseQuery; // no skip/limit
-    const r = new RegExp(escRegex(q), "i");
+    const r = new RegExp(escapeRegex(q), "i");
     const filtered = all.filter((x) =>
       r.test(x?.comment || "") ||
       r.test(x?.reviewer?.fullName || "") ||

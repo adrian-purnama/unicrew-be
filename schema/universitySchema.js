@@ -6,6 +6,7 @@ const universitySchema = new mongoose.Schema({
     required: true,
     unique: true,
   },
+  normName: { type: String, index: true },
   speciality: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'StudyProgram'
