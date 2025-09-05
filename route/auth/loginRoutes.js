@@ -19,6 +19,7 @@ const roleModelMap = {
 function loginRoutes(fastify, options) {
   fastify.post("/login", { schema: LoginDto }, async (req, res) => {
     const { email, password, role } = req.body;
+    console.log(role)
 
     try {
       const lowerEmail = String(email || "")
@@ -29,8 +30,8 @@ function loginRoutes(fastify, options) {
       }
 
       const Model = roleModelMap[role];
+      console.log(Model)
       if (!Model) return res.code(400).send({ message: "Invalid role" });
-
       const user = await Model.findOne({ email: lowerEmail });
       if (!user) return res.code(401).send({ message: "Account not found" });
 

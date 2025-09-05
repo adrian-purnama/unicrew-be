@@ -22,7 +22,16 @@ function isUserProfileComplete(user) {
   };
 }
 
+function normalizeSkillName(s = "") {
+  return s
+    .toString()
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+};
+
 
 module.exports = {
-    isUserProfileComplete
+    isUserProfileComplete, normalizeSkillName
 }
