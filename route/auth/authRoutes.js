@@ -9,6 +9,7 @@ const { isUserProfileComplete } = require("../../helper/userHelper");
 const {
   sendVerifyEmail,
   sendForgotPasswordEmail,
+  sendAdminVerifiedEmail,
 } = require("../../helper/emailHelper");
 const { roleAuth } = require("../../helper/roleAuth");
 const { verifyAndBuildAssetLink } = require("../../helper/assetAuth");
@@ -45,6 +46,15 @@ async function authRoutes(fastify, option) {
 
       exist.isVerified = true;
       await exist.save();
+
+      if (role === "admin") {
+  try {
+    await sendAdminVerifiedEmail(email);
+  } catch (e) {
+    console.error("Failed to send admin verified email:", e.message);
+  }
+}
+
 
       const token = jwt.sign(
         {

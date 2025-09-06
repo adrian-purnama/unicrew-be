@@ -192,4 +192,35 @@ const sendAdminApprovalEmail = async (targetEmail, otp, masterEmail) => {
     throw new Error(error.message);
   }
 };
-module.exports = { sendVerifyEmail, sendForgotPasswordEmail, sendApplicantStatusEmail, sendAdminApprovalEmail};
+
+const sendAdminVerifiedEmail = async (targetEmail) => {
+  if (!feLink) throw new Error("feLink not configured");
+
+  const loginUrl = `${feLink}/auth/admin/login`;
+  const subject = "Unicru — Your admin access is approved";
+  const html = `
+    <div style="font-family: Arial, sans-serif; padding: 20px;">
+      <h2>Admin Access Approved ✅</h2>
+      <p>Hello, your <strong>Unicru Admin</strong> access has been approved.</p>
+      <p>You can now log in using the button below:</p>
+
+      <div style="margin:16px 0;">
+        <a href="${loginUrl}" style="
+          display:inline-block; background-color:#2563eb; color:#fff; padding:10px 16px;
+          text-decoration:none; border-radius:6px; font-weight:600;
+        ">Go to Admin Login</a>
+      </div>
+
+      <p>If the button doesn't work, open this link:</p>
+      <p style="word-break:break-all; margin:8px 0;">
+        <a href="${loginUrl}">${loginUrl}</a>
+      </p>
+
+      <hr style="border:none; border-top:1px solid #ddd; margin:20px 0;" />
+      <small>This email was sent because an admin approver verified your account.</small>
+    </div>
+  `;
+
+  await sendEmail(targetEmail, subject, html);
+};
+module.exports = { sendVerifyEmail, sendForgotPasswordEmail, sendApplicantStatusEmail, sendAdminApprovalEmail,sendAdminVerifiedEmail};
