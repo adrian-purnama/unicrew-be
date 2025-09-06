@@ -3,7 +3,7 @@ const User = require("../../schema/userSchema");
 const Company = require("../../schema/companySchema");
 const { validateOtp, createOtp } = require("../../helper/otpHelper");
 const dotenv = require("dotenv");
-
+const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { isUserProfileComplete } = require("../../helper/userHelper");
 const {
@@ -13,10 +13,16 @@ const {
 } = require("../../helper/emailHelper");
 const { roleAuth } = require("../../helper/roleAuth");
 const { verifyAndBuildAssetLink } = require("../../helper/assetAuth");
-const { VerifyEmailDto, ResetPasswordDto, ForgotPasswordDto, ReverifyDto } = require("./dto");
+const {
+  VerifyEmailDto,
+  ResetPasswordDto,
+  ForgotPasswordDto,
+  ReverifyDto,
+} = require("./dto");
 
 dotenv.config();
 const jwtSecret = process.env.JWT_SECRET;
+const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS);
 // const dotenv = require("dotenv");
 // dotenv.config();
 // const salt = process.env.SALT || 10
@@ -48,13 +54,12 @@ async function authRoutes(fastify, option) {
       await exist.save();
 
       if (role === "admin") {
-  try {
-    await sendAdminVerifiedEmail(email);
-  } catch (e) {
-    console.error("Failed to send admin verified email:", e.message);
-  }
-}
-
+        try {
+          await sendAdminVerifiedEmail(email);
+        } catch (e) {
+          console.error("Failed to send admin verified email:", e.message);
+        }
+      }
 
       const token = jwt.sign(
         {
@@ -95,19 +100,19 @@ async function authRoutes(fastify, option) {
 
       let profilePictureUrl = DEFAULT_AVATAR;
 
-      console.log(user)
+      console.log(user);
 
       if (user?.profilePicture) {
         try {
           const { url } = await verifyAndBuildAssetLink({
             req,
-            assetId: user.profilePicture, 
-            ttlSeconds: 300, 
-            reuse: true, 
+            assetId: user.profilePicture,
+            ttlSeconds: 300,
+            reuse: true,
           });
           if (url) profilePictureUrl = url;
         } catch (e) {
-          console.log(e)
+          console.log(e);
         }
       } else if (
         typeof user?.profilePicture === "string" &&
@@ -115,7 +120,6 @@ async function authRoutes(fastify, option) {
       ) {
         profilePictureUrl = user.profilePicture;
       }
-
 
       return res.code(200).send({
         _id: userId,
@@ -127,9 +131,8 @@ async function authRoutes(fastify, option) {
     }
   );
 
-  
   // TODO rate limit
-  fastify.post("/reverify", {schema : ReverifyDto} ,async (req, res) => {
+  fastify.post("/reverify", { schema: ReverifyDto }, async (req, res) => {
     let email, role;
 
     // Method 1: From JWT token
@@ -181,79 +184,90 @@ async function authRoutes(fastify, option) {
     }
   });
 
-  fastify.post("/forgot-password", {schema : ForgotPasswordDto} ,async (req, res) => {
-    const { email, role } = req.body;
-    console.log(email.role);
+  fastify.post(
+    "/forgot-password",
+    { schema: ForgotPasswordDto },
+    async (req, res) => {
+      const { email, role } = req.body;
 
-    if (!email || !role) {
-      return res.code(400).send({ message: "Email and role are required." });
-    }
-
-    try {
-      let user;
-
-      if (role === "user") {
-        user = await User.findOne({ email });
-      } else if (role === "admin") {
-        user = await Admin.findOne({ email });
-      } else if (role === "company") {
-        user = await Company.findOne({ email });
-      } else {
-        return res.code(400).send({ message: "Invalid role." });
+      if (!email || !role) {
+        return res.code(400).send({ message: "Email and role are required." });
       }
 
-      if (!user) {
-        return res.code(404).send({ message: "Account not found." });
+      try {
+        let user;
+
+        if (role === "user") {
+          user = await User.findOne({ email });
+        } else if (role === "admin") {
+          user = await Admin.findOne({ email });
+        } else if (role === "company") {
+          user = await Company.findOne({ email });
+        } else {
+          return res.code(400).send({ message: "Invalid role." });
+        }
+
+        console.log(user)
+
+        if (!user) {
+          return res.code(404).send({ message: "Account not found." });
+        }
+
+        const token = await createOtp(user._id);
+        await sendForgotPasswordEmail(email, token, role);
+
+        return res.code(200).send({ message: "Reset email sent." });
+      } catch (err) {
+        console.error("Forgot password error:", err);
+        return res.code(500).send({ message: "Internal server error." });
       }
-
-      const token = await createOtp(user._id);
-      await sendForgotPasswordEmail(email, token, role);
-
-      return res.code(200).send({ message: "Reset email sent." });
-    } catch (err) {
-      console.error("Forgot password error:", err);
-      return res.code(500).send({ message: "Internal server error." });
     }
-  });
-
+  );
 
   // TODO rate limit
-  fastify.post("/reset-password", {schema : ResetPasswordDto} ,async (req, res) => {
-    const { email, role, token, newPassword } = req.body;
+  fastify.post(
+    "/reset-password",
+    { schema: ResetPasswordDto },
+    async (req, res) => {
+      const { email, role, token, newPassword } = req.body;
 
-    if (!email || !role || !token || !newPassword) {
-      return res.code(400).send({ message: "Missing required fields." });
-    }
-
-    try {
-      const valid = await validateOtp(email, token);
-      if (!valid)
-        return res.code(400).send({ message: "Invalid or expired token." });
-
-      let user;
-      if (role === "user") {
-        user = await User.findOne({ email });
-      } else if (role === "admin") {
-        user = await Admin.findOne({ email });
-      } else if (role === "company") {
-        user = await Company.findOne({ email });
-      } else {
-        return res.code(400).send({ message: "Invalid role." });
+      if (!email || !role || !token || !newPassword) {
+        return res.code(400).send({ message: "Missing required fields." });
       }
 
-      if (!user) {
-        return res.code(404).send({ message: "Account not found." });
+      try {
+
+
+        let user;
+        if (role === "user") {
+          user = await User.findOne({ email });
+        } else if (role === "admin") {
+          user = await Admin.findOne({ email });
+        } else if (role === "company") {
+          user = await Company.findOne({ email });
+        } else {
+          return res.code(400).send({ message: "Invalid role." });
+        }
+
+        if (!user) {
+          return res.code(404).send({ message: "Account not found." });
+        }
+
+                const valid = await validateOtp(user._id, token);
+        if (!valid)
+          return res.code(400).send({ message: "Invalid or expired token." });
+
+        const hash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+        user.password = hash;
+        await user.save();
+
+        return res.code(200).send({ message: "Password has been reset." });
+      } catch (err) {
+        console.error("Reset password error:", err);
+        return res.code(500).send({ message: "Internal server error." });
       }
-
-      user.password = newPassword;
-      await user.save();
-
-      return res.code(200).send({ message: "Password has been reset." });
-    } catch (err) {
-      console.error("Reset password error:", err);
-      return res.code(500).send({ message: "Internal server error." });
     }
-  });
+  );
 }
 
 module.exports = authRoutes;

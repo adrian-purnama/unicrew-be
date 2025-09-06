@@ -7,14 +7,16 @@ const Kecamatan = require("../../schema/kecamatanSchema");
 const Kelurahan = require("../../schema/kelurahanSchema");
 const University = require("../../schema/universitySchema");
 const StudyProgram = require("../../schema/studyProgramSchema");
+const bcrypt = require("bcrypt");
+const dotenv = require("dotenv");
+dotenv.config();
+const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS);
 
 const {
   industryDto,
-  skillDto,
   provinsiDto,
   kabupatenDto,
   kecamatanDto,
-  kelurahanDto,
 } = require("./dto");
 const { default: axios } = require("axios");
 const { roleAuth } = require("../../helper/roleAuth");
@@ -27,6 +29,7 @@ const {
   buildFuzzyQueryOnNormName,
 } = require("../../helper/normalizeHelper");
 const { default: mongoose } = require("mongoose");
+const Admin = require("../../schema/adminSchema");
 
 function toBool(v) {
   if (v === undefined) return undefined;
@@ -727,83 +730,81 @@ async function adminRoutes(fastify, options) {
   );
 
   // ---------- COMPANIES ----------
-fastify.get(
-  "/companies",
-  { preHandler: roleAuth(["admin"]) },
-  async (req, res) => {
-    const { page, limit, skip } = getPaging(req);
-    const q = (req.query.q || "").trim();
-    const isActive = toBool(req.query.isActive);
-    const isVerified = toBool(req.query.isVerified); // email verification filter (kept)
-    const trusted = toBool(req.query.trusted);       // NEW: trust.verified filter
+  fastify.get(
+    "/companies",
+    { preHandler: roleAuth(["admin"]) },
+    async (req, res) => {
+      const { page, limit, skip } = getPaging(req);
+      const q = (req.query.q || "").trim();
+      const isActive = toBool(req.query.isActive);
+      const isVerified = toBool(req.query.isVerified); // email verification filter (kept)
+      const trusted = toBool(req.query.trusted); // NEW: trust.verified filter
 
-    const $and = [{ role: "company" }];
-    if (q) {
-      const r = regexOrNull(q);
-      $and.push({ $or: [{ companyName: r }, { email: r }] });
+      const $and = [{ role: "company" }];
+      if (q) {
+        const r = regexOrNull(q);
+        $and.push({ $or: [{ companyName: r }, { email: r }] });
+      }
+      if (isActive !== undefined) $and.push({ isActive });
+      if (isVerified !== undefined) $and.push({ isVerified });
+      if (trusted !== undefined) $and.push({ "trust.verified": trusted });
+
+      const filter = $and.length ? { $and } : {};
+      const [items, total] = await Promise.all([
+        Company.find(filter)
+          .select(
+            "companyName email isVerified isActive createdAt rating.average rating.count trust.verified trust.by trust.at trust.notes"
+          )
+          .populate({ path: "trust.by", select: "email fullName" }) // uncomment if you want admin details
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        Company.countDocuments(filter),
+      ]);
+
+      res.send({ items, total, page, pages: Math.ceil(total / limit) });
     }
-    if (isActive !== undefined)   $and.push({ isActive });
-    if (isVerified !== undefined) $and.push({ isVerified });
-    if (trusted !== undefined)    $and.push({ "trust.verified": trusted });
+  );
 
-    const filter = $and.length ? { $and } : {};
-    const [items, total] = await Promise.all([
-      Company.find(filter)
-        .select(
-          "companyName email isVerified isActive createdAt rating.average rating.count trust.verified trust.by trust.at trust.notes"
-        )
-        .populate({ path: "trust.by", select: "email fullName" }) // uncomment if you want admin details
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-      Company.countDocuments(filter),
-    ]);
+  fastify.patch(
+    "/companies/:id/verify",
+    { preHandler: roleAuth(["admin"]) },
+    async (req, res) => {
+      const notes = (req.body?.notes || "").toString().slice(0, 500);
+      const doc = await Company.findByIdAndUpdate(
+        req.params.id,
+        {
+          "trust.verified": true,
+          "trust.by": req.userId,
+          "trust.at": new Date(),
+          "trust.notes": notes,
+        },
+        { new: true }
+      ).select("companyName email trust");
+      if (!doc) return res.code(404).send({ message: "Company not found" });
+      res.send({ ok: true, company: doc });
+    }
+  );
 
-    res.send({ items, total, page, pages: Math.ceil(total / limit) });
-  }
-);
-
-
-fastify.patch(
-  "/companies/:id/verify",
-  { preHandler: roleAuth(["admin"]) },
-  async (req, res) => {
-    const notes = (req.body?.notes || "").toString().slice(0, 500);
-    const doc = await Company.findByIdAndUpdate(
-      req.params.id,
-      {
-        "trust.verified": true,
-        "trust.by": req.userId,
-        "trust.at": new Date(),
-        "trust.notes": notes,
-      },
-      { new: true }
-    ).select("companyName email trust");
-    if (!doc) return res.code(404).send({ message: "Company not found" });
-    res.send({ ok: true, company: doc });
-  }
-);
-
-fastify.patch(
-  "/companies/:id/unverify",
-  { preHandler: roleAuth(["admin"]) },
-  async (req, res) => {
-    const doc = await Company.findByIdAndUpdate(
-      req.params.id,
-      {
-        "trust.verified": false,
-        "trust.by": null,
-        "trust.at": null,
-        "trust.notes": "",
-      },
-      { new: true }
-    ).select("companyName email trust");
-    if (!doc) return res.code(404).send({ message: "Company not found" });
-    res.send({ ok: true, company: doc });
-  }
-);
-
+  fastify.patch(
+    "/companies/:id/unverify",
+    { preHandler: roleAuth(["admin"]) },
+    async (req, res) => {
+      const doc = await Company.findByIdAndUpdate(
+        req.params.id,
+        {
+          "trust.verified": false,
+          "trust.by": null,
+          "trust.at": null,
+          "trust.notes": "",
+        },
+        { new: true }
+      ).select("companyName email trust");
+      if (!doc) return res.code(404).send({ message: "Company not found" });
+      res.send({ ok: true, company: doc });
+    }
+  );
 
   fastify.patch(
     "/companies/:id/activate",
@@ -855,7 +856,7 @@ fastify.patch(
       const minRating = parseInt(req.query.minRating || "0", 10);
       const q = (req.query.q || "").trim();
 
-      const USERS = User.collection.name;       // e.g. "users"
+      const USERS = User.collection.name; // e.g. "users"
       const COMPANIES = Company.collection.name; // e.g. "companies"
 
       const baseMatch = {};
@@ -867,12 +868,40 @@ fastify.patch(
         { $match: baseMatch },
 
         // Look up both possible collections for reviewer
-        { $lookup: { from: USERS, localField: "reviewer", foreignField: "_id", as: "rUser" } },
-        { $lookup: { from: COMPANIES, localField: "reviewer", foreignField: "_id", as: "rCompany" } },
+        {
+          $lookup: {
+            from: USERS,
+            localField: "reviewer",
+            foreignField: "_id",
+            as: "rUser",
+          },
+        },
+        {
+          $lookup: {
+            from: COMPANIES,
+            localField: "reviewer",
+            foreignField: "_id",
+            as: "rCompany",
+          },
+        },
 
         // Look up both possible collections for reviewee
-        { $lookup: { from: USERS, localField: "reviewee", foreignField: "_id", as: "eUser" } },
-        { $lookup: { from: COMPANIES, localField: "reviewee", foreignField: "_id", as: "eCompany" } },
+        {
+          $lookup: {
+            from: USERS,
+            localField: "reviewee",
+            foreignField: "_id",
+            as: "eUser",
+          },
+        },
+        {
+          $lookup: {
+            from: COMPANIES,
+            localField: "reviewee",
+            foreignField: "_id",
+            as: "eCompany",
+          },
+        },
 
         // Flatten lookups
         {
@@ -888,10 +917,18 @@ fastify.patch(
         {
           $addFields: {
             reviewerDoc: {
-              $cond: [{ $eq: ["$reviewerType", "User"] }, "$rUser", "$rCompany"],
+              $cond: [
+                { $eq: ["$reviewerType", "User"] },
+                "$rUser",
+                "$rCompany",
+              ],
             },
             revieweeDoc: {
-              $cond: [{ $eq: ["$revieweeType", "User"] }, "$eUser", "$eCompany"],
+              $cond: [
+                { $eq: ["$revieweeType", "User"] },
+                "$eUser",
+                "$eCompany",
+              ],
             },
           },
         },
@@ -987,6 +1024,159 @@ fastify.patch(
       const doc = await Review.findByIdAndDelete(req.params.id);
       if (!doc) return res.code(404).send({ message: "Review not found" });
       res.send({ ok: true });
+    }
+  );
+
+  fastify.get(
+    "/accounts/:role",
+    { preHandler: roleAuth(["admin"]) },
+    async (req, res) => {
+      const role = String(req.params.role || "").toLowerCase();
+      if (!["user", "company", "admin"].includes(role)) {
+        return res
+          .code(400)
+          .send({ ok: false, message: "role must be user|company|admin" });
+      }
+
+      const { page, limit, skip } = getPaging(req);
+      const q = (req.query.q || "").trim();
+      const isActive =
+        req.query.isActive === undefined
+          ? undefined
+          : String(req.query.isActive) === "true";
+      const isVerified =
+        req.query.isVerified === undefined
+          ? undefined
+          : String(req.query.isVerified) === "true";
+      const trusted =
+        req.query.trusted === undefined
+          ? undefined
+          : String(req.query.trusted) === "true";
+
+      // choose model + name field
+      let Model,
+        nameField,
+        baseFilter = {};
+      if (role === "user") {
+        Model = User; // fullName, email, isActive, isVerified
+        nameField = "fullName";
+        baseFilter.role = "user";
+        if (isActive !== undefined) baseFilter.isActive = isActive;
+        if (isVerified !== undefined) baseFilter.isVerified = isVerified;
+      } else if (role === "company") {
+        Model = Company; // companyName, email, isActive, isVerified, trust.verified
+        nameField = "companyName";
+        baseFilter.role = "company";
+        if (isActive !== undefined) baseFilter.isActive = isActive;
+        if (isVerified !== undefined) baseFilter.isVerified = isVerified;
+        if (trusted !== undefined) baseFilter["trust.verified"] = trusted;
+      } else {
+        // admin
+        Model = Admin || User; // if admins stored in User, filter by role: 'admin'
+        nameField = "email"; // no fullName in your Admin schema
+        if (!Admin) baseFilter.role = "admin";
+        if (isVerified !== undefined) baseFilter.isVerified = isVerified;
+      }
+
+      // search
+      if (q) {
+        const r = new RegExp(escapeRegex(q), "i");
+        baseFilter.$or = [{ [nameField]: r }, { email: r }];
+      }
+
+      const projection =
+        role === "company"
+          ? "companyName email role isVerified isActive trust.verified createdAt"
+          : "fullName email role isVerified isActive createdAt";
+
+      const [docs, total] = await Promise.all([
+        Model.find(baseFilter)
+          .select(projection)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        Model.countDocuments(baseFilter),
+      ]);
+
+      // unify shape for UI
+      const items = docs.map((d) => ({
+        _id: d._id,
+        role: d.role || role,
+        email: d.email,
+        name: role === "company" ? d.companyName : d.fullName || d.email,
+        isActive: typeof d.isActive === "boolean" ? d.isActive : null,
+        isVerified: typeof d.isVerified === "boolean" ? d.isVerified : null,
+        trusted: d?.trust?.verified ?? null, // companies only; others will be null
+        createdAt: d.createdAt,
+      }));
+
+      res.send({
+        ok: true,
+        role,
+        items,
+        total,
+        page,
+        pages: Math.max(1, Math.ceil(total / limit)),
+      });
+    }
+  );
+
+  fastify.post(
+    "/reset-password/:role",
+    { preHandler: roleAuth(["admin"]) },
+    async (req, res) => {
+      const role = String(req.params.role || "").toLowerCase();
+      if (!["user", "company", "admin"].includes(role)) {
+        return bad(res, 400, "role must be one of: user, company, admin");
+      }
+
+      const { id, email, newPassword } = req.body || {};
+      if (!id && !email) return bad(res, 400, "Provide id or email");
+      if (!newPassword) return bad(res, 400, "newPassword is required");
+      if (newPassword.length < 8)
+        return bad(res, 400, "Password must be ≥ 8 chars");
+      if (!/\d/.test(newPassword))
+        return bad(res, 400, "Password must include a number");
+      if (!/[^A-Za-z0-9]/.test(newPassword))
+        return bad(res, 400, "Password must include a special character");
+
+      const hash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+
+      let Model;
+      if (role === "company") Model = Company;
+      else if (role === "admin") Model = Admin || User;
+      else Model = User;
+
+      const finder = {};
+      if (id) {
+        if (!mongoose.Types.ObjectId.isValid(id))
+          return bad(res, 400, "Invalid id");
+        finder._id = id;
+      } else {
+        finder.email = String(email || "")
+          .trim()
+          .toLowerCase();
+      }
+      if (!Admin && role === "admin") finder.role = "admin";
+
+      const doc = await Model.findOne(finder);
+      if (!doc) return bad(res, 404, `${role} not found`);
+
+      doc.password = hash;
+      if (doc.loginStats) {
+        doc.loginStats.loginTries = 0;
+        doc.loginStats.lastLoginAttempt = null;
+      }
+      await doc.save();
+
+      return res.send({
+        ok: true,
+        role,
+        id: String(doc._id),
+        email: doc.email,
+        updatedAt: new Date().toISOString(),
+      });
     }
   );
 }
