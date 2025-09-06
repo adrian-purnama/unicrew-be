@@ -25,7 +25,6 @@ const loginRoutes = require("./route/auth/loginRoutes");
 const adminRoutes = require("./route/admin/adminRoutes");
 const userRoutes = require("./route/user/userRoutes");
 const companyRoutes = require("./route/company/companyRoutes");
-// const jobRoutes = require("./route/company/jobRoutes");
 const notificationRoutes = require("./route/notification/notificationRoutes");
 const chatSocket = require("./route/chat/chatSocket");
 const { chatRoutes } = require("./route/chat/chatRoutes");
@@ -93,8 +92,6 @@ async function startServer() {
     });
 
     //routes
-    // await fastify.register(jobRoutes, { prefix: "/company" });
-
     await fastify.register(authRoutes, { prefix: "/auth" });
     await fastify.register(registerRoutes, { prefix: "/register" });
     await fastify.register(loginRoutes, { prefix: "/login" });
@@ -113,10 +110,6 @@ async function startServer() {
     await fastify.register(chatRoutes, { prefix: "/chat" });
 
     await fastify.listen({ port: 4001, host: "0.0.0.0" });
-
-    // await fastify.listen({ port: 10000 });
-    // fastify.log.info(`🚀 Server running at http://localhost:3000`);
-    // console.log(`🚀 Server running at http://localhost:3000`);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);

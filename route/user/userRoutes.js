@@ -1,45 +1,36 @@
+// routes/userRoutes.js
 const multer = require("fastify-multer");
 const path = require("path");
 const fs = require("fs");
-const User = require("../../schema/userSchema");
-const { roleAuth } = require("../../helper/roleAuth");
-const dotenv = require("dotenv");
-const {
-  isUserProfileComplete,
-} = require("../../helper/userHelper");
-const {
-  uploadToGridFS,
-  deleteFromGridFS,
-} = require("../../helper/gridfsHelper");
-const Asset = require("../../schema/assetSchema");
-const { verifyAndBuildAssetLink } = require("../../helper/assetAuth");
 const { default: mongoose } = require("mongoose");
-const Application = require("../../schema/applicationSchema");
+
+const User = require("../../schema/userSchema");
 const Skill = require("../../schema/skillSchema");
+const Asset = require("../../schema/assetSchema");
+const Application = require("../../schema/applicationSchema");
+
+const { roleAuth } = require("../../helper/roleAuth");
+const { isUserProfileComplete } = require("../../helper/userHelper");
 const { normalizeName } = require("../../helper/normalizeHelper");
+const { verifyAndBuildAssetLink } = require("../../helper/assetAuth");
+const { uploadToGridFS, deleteFromGridFS } = require("../../helper/gridfsHelper");
+
+const dotenv = require("dotenv");
 dotenv.config();
 
 const profileFolderId = process.env.GDRIVE_FOLDER_PROFILE;
 const cvFolderId = process.env.GDRIVE_FOLDER_CV;
 const portfolioFolderId = process.env.GDRIVE_FOLDER_PORTFOLIO;
 
-// const upload = multer({ dest: "temp/" });
-
-function extractDriveFileId(link) {
-  if (!link || typeof link !== "string") return null;
-  const match = link.match(/(?:id=|\/d\/)([a-zA-Z0-9_-]{10,})/);
-  return match ? match[1] : null;
-}
-
 // ─────────────────────────────────────────────────────────────
 // Config
 // ─────────────────────────────────────────────────────────────
-const MAX_BYTES = 100 * 1024 * 1024; // 5MB per file; bump if portfolio is often bigger
+const MAX_BYTES = 100 * 1024 * 1024; // 100MB
 
 const FIELD_CONFIG = {
   profilePicture: {
     kind: "avatar",
-    visibility: "private", // change to "public" if you want avatars visible without auth
+    visibility: "private",
     mimes: ["image/jpeg", "image/png", "image/webp"],
   },
   cv: {
@@ -99,6 +90,7 @@ async function deleteAssetById(assetId) {
 }
 
 async function userRoutes(fastify, options) {
+  // Update profile (with assets + skills)
   fastify.patch(
     "/profile",
     {
@@ -150,9 +142,10 @@ async function userRoutes(fastify, options) {
 
         const updates = { ...req.body };
 
-        // Handle skills if present in multipart form
+        // Prepare skills update (set full array so validator runs)
+        let toAdd = [];
+        let toRemove = [];
         if (typeof updates.skills !== "undefined") {
-          // Coerce to array of ObjectId strings
           let nextIds = Array.isArray(updates.skills)
             ? updates.skills
             : [updates.skills];
@@ -160,26 +153,10 @@ async function userRoutes(fastify, options) {
 
           const currentIds = (user.skills || []).map((id) => String(id));
 
-          // Diff
-          const toAdd = nextIds.filter((id) => !currentIds.includes(id));
-          const toRemove = currentIds.filter((id) => !nextIds.includes(id));
+          toAdd = nextIds.filter((id) => !currentIds.includes(id));
+          toRemove = currentIds.filter((id) => !nextIds.includes(id));
 
-          // Apply new skills to user document
-          updates.skills = nextIds;
-
-          // Adjust counters
-          if (toAdd.length) {
-            await Skill.updateMany(
-              { _id: { $in: toAdd } },
-              { $inc: { usageCount: 1 } }
-            );
-          }
-          if (toRemove.length) {
-            await Skill.updateMany(
-              { _id: { $in: toRemove }, usageCount: { $gt: 0 } },
-              { $inc: { usageCount: -1 } }
-            );
-          }
+          updates.skills = nextIds; // set full array (validator <=10 will run)
         }
 
         if (avatarAsset) {
@@ -195,11 +172,27 @@ async function userRoutes(fastify, options) {
           updates.portfolio = portfolioAsset._id;
         }
 
+        // IMPORTANT: runValidators ensures the skills length rule is enforced
         const updated = await User.findByIdAndUpdate(userId, updates, {
           new: true,
+          runValidators: true,
         });
 
-        // Minimal logs to confirm
+        // Only adjust Skill.usageCount AFTER successful user update
+        if (toAdd.length) {
+          await Skill.updateMany(
+            { _id: { $in: toAdd } },
+            { $inc: { usageCount: 1 } }
+          );
+        }
+        if (toRemove.length) {
+          await Skill.updateMany(
+            { _id: { $in: toRemove }, usageCount: { $gt: 0 } },
+            { $inc: { usageCount: -1 } }
+          );
+        }
+
+        // Minimal logs
         if (avatarAsset)
           console.log("[profile] avatar set:", String(avatarAsset._id));
         if (cvAsset) console.log("[profile] cv set:", String(cvAsset._id));
@@ -216,6 +209,7 @@ async function userRoutes(fastify, options) {
     }
   );
 
+  // Profile completeness
   fastify.get(
     "/profile-check",
     { preHandler: roleAuth(["user"]) },
@@ -225,7 +219,6 @@ async function userRoutes(fastify, options) {
         if (!user) return res.code(404).send({ message: "User not found" });
 
         const result = isUserProfileComplete(user);
-
         result.isVerified = user.isVerified;
 
         if (!user.isVerified && user.expiresAt) {
@@ -243,11 +236,11 @@ async function userRoutes(fastify, options) {
     }
   );
 
+  // Get profile
   fastify.get(
     "/profile",
     { preHandler: roleAuth(["user", "admin"]) },
     async (req, res) => {
-      // Populate skills with name + usageCount (and your existing lookups)
       const user = await User.findById(req.userId)
         .populate({ path: "skills", select: "name usageCount" })
         .populate(
@@ -266,7 +259,6 @@ async function userRoutes(fastify, options) {
       const userObj = user.toObject();
       userObj.email = maskEmail(user.email);
 
-      // helper to build a 5-min public URL or return null
       const buildUrl = async (assetId) => {
         if (!assetId) return null;
         try {
@@ -282,12 +274,10 @@ async function userRoutes(fastify, options) {
         }
       };
 
-      // Assets
       userObj.profilePicture = await buildUrl(user.profilePicture);
       userObj.curriculumVitae = await buildUrl(user.curriculumVitae);
       userObj.portfolio = await buildUrl(user.portfolio);
 
-      // Ensure skills are shaped cleanly: [{ _id, name, usageCount }]
       userObj.skills = (userObj.skills || []).map((s) =>
         s && s._id
           ? { _id: s._id, name: s.name, usageCount: s.usageCount ?? 0 }
@@ -298,6 +288,7 @@ async function userRoutes(fastify, options) {
     }
   );
 
+  // Counts
   fastify.get(
     "/my-counts",
     { preHandler: roleAuth(["user"]) },
@@ -355,81 +346,100 @@ async function userRoutes(fastify, options) {
     }
   );
 
+  // ADD skill(s) — uses save() so validator runs (<= 10 skills)
   fastify.post(
     "/skill/add",
     { preHandler: roleAuth(["user"]) },
     async (req, res) => {
-      const userId = req.userId;
-      const body = req.body || {};
-      let names = [];
+      try {
+        const userId = req.userId;
+        const body = req.body || {};
+        let names = [];
 
-      if (Array.isArray(body.names)) {
-        names = body.names;
-      } else if (typeof body.name === "string") {
-        names = [body.name];
-      }
+        if (Array.isArray(body.names)) {
+          names = body.names;
+        } else if (typeof body.name === "string") {
+          names = [body.name];
+        }
 
-      // basic validation
-      names = names
-        .map((s) => (s || "").toString().trim())
-        .filter((s) => s.length >= 2);
+        names = names
+          .map((s) => (s || "").toString().trim())
+          .filter((s) => s.length >= 2);
 
-      if (names.length === 0) {
-        return res
-          .code(400)
-          .send({ message: "Provide a skill name (>=2 chars)." });
-      }
+        if (names.length === 0) {
+          return res.code(400).send({ message: "Provide a skill name (>=2 chars)." });
+        }
 
-      const results = [];
+        // Load user doc once (so we can push + save -> validator runs)
+        const user = await User.findById(userId).select("skills");
+        if (!user) return res.code(404).send({ message: "User not found" });
 
-      for (const rawName of names) {
-        const normName = normalizeName(rawName);
-        console.log(normName)
-        let skill;
+        const addedIds = [];
+        const results = [];
 
-        try {
-          skill = await Skill.findOneAndUpdate(
-            { normName },
-            { $setOnInsert: { name: rawName, normName, source: "user" } },
-            { upsert: true, new: true }
-          );
-        } catch (e) {
-          if (e.code === 11000) {
-            skill = await Skill.findOne({ normName });
+        for (const rawName of names) {
+          const normName = normalizeName(rawName);
+
+          // Upsert/find Skill by normalized name
+          let skill;
+          try {
+            skill = await Skill.findOneAndUpdate(
+              { normName },
+              { $setOnInsert: { name: rawName, normName, source: "user" } },
+              { upsert: true, new: true }
+            ).select("_id name usageCount");
+          } catch (e) {
+            if (e.code === 11000) {
+              skill = await Skill.findOne({ normName }).select("_id name usageCount");
+            } else {
+              throw e;
+            }
+          }
+
+          // Dedupe in user.skills
+          const exists = user.skills.some((id) => String(id) === String(skill._id));
+          if (!exists) {
+            user.skills.push(skill._id); // will trigger validator on save()
+            addedIds.push(skill._id);
+            results.push({ skill, added: true });
           } else {
-            throw e;
+            results.push({ skill, added: false });
           }
         }
 
-        const upd = await User.updateOne(
-          { _id: userId, skills: { $ne: skill._id } },
-          { $addToSet: { skills: skill._id } }
-        );
+        // Save once; enforces <= 10 via schema validator
+        await user.save();
 
-        const added = upd.modifiedCount > 0;
-
-        // after $inc when "added" is true
-        if (added) {
-          await Skill.updateOne(
-            { _id: skill._id },
+        // Only now bump usageCount for the newly added ones
+        if (addedIds.length) {
+          await Skill.updateMany(
+            { _id: { $in: addedIds } },
             { $inc: { usageCount: 1 } }
           );
-          skill = await Skill.findById(skill._id)
-            .select("name usageCount")
-            .lean();
-        } else {
-          // even if not added, include current count for the UI
-          skill = await Skill.findById(skill._id)
-            .select("name usageCount")
-            .lean();
         }
-        results.push({ skill, added });
-      }
 
-      return res.code(201).send({ ok: true, results });
+        // Return latest usageCount for UI
+        const latest = await Skill.find({ _id: { $in: results.map(r => r.skill._id) } })
+          .select("_id name usageCount")
+          .lean();
+
+        const latestMap = new Map(latest.map(s => [String(s._id), s]));
+        const hydrated = results.map(r => ({
+          skill: latestMap.get(String(r.skill._id)) || r.skill,
+          added: r.added,
+        }));
+
+        return res.code(201).send({ ok: true, results: hydrated });
+      } catch (e) {
+        if (e.name === "ValidationError") {
+          return res.code(400).send({ message: e.message });
+        }
+        return res.code(400).send({ message: e.message || "Failed to add skill(s)" });
+      }
     }
   );
 
+  // REMOVE skill
   fastify.post(
     "/skill/remove",
     { preHandler: roleAuth(["user"]) },

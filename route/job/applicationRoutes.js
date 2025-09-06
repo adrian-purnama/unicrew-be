@@ -133,6 +133,8 @@ fastify.get(
       const applications = await Application.find({ job: jobId })
         .populate({
           path: "user",
+          // ✅ only populate active users
+          match: { isActive: true },
           select:
             "fullName email aboutMe skills location curriculumVitae portfolio profilePicture university studyProgram workTypePreferences minExpectedSalary industries",
           populate: [
@@ -146,6 +148,9 @@ fastify.get(
         })
         .sort({ submittedAt: -1 })
         .lean();
+
+      // ✅ drop applications whose user didn’t populate (inactive/null)
+      const activeApps = applications.filter((a) => a.user);
 
       const toTempUrl = async (assetId) => {
         if (!assetId) return null;
@@ -164,7 +169,7 @@ fastify.get(
       };
 
       const withChatAndMatch = await Promise.all(
-        applications.map(async (app) => {
+        activeApps.map(async (app) => {
           const chatRoom = await ChatRoom.findOne({
             user: app.user._id,
             company: req.userId,
@@ -178,15 +183,12 @@ fastify.get(
             industries: app.user.industries || [],
           });
 
-          // temp asset URLs
           const [cvUrl, portfolioUrl, avatarUrl] = await Promise.all([
             toTempUrl(app.user.curriculumVitae),
             toTempUrl(app.user.portfolio),
             toTempUrl(app.user.profilePicture),
           ]);
 
-          // ── recent reviews about this user (visible to company) ──
-          // last 3 reviews, show reviewer name (companyName or fullName)
           const [recentReviews, ratingStats] = await Promise.all([
             Review.find({
               reviewee: app.user._id,
