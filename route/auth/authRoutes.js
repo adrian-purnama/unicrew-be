@@ -19,10 +19,11 @@ const {
   ForgotPasswordDto,
   ReverifyDto,
 } = require("./dto");
+// rate-limit is registered globally in index.js; per-route config is set via route `config.rateLimit`.
 
 dotenv.config();
 const jwtSecret = process.env.JWT_SECRET;
-const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS);
+const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS) || 10;
 // const dotenv = require("dotenv");
 // dotenv.config();
 // const salt = process.env.SALT || 10
@@ -30,24 +31,49 @@ const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS);
 // const salt = 10;
 
 async function authRoutes(fastify, option) {
-  fastify.post("/verify", { schema: VerifyEmailDto }, async (req, res) => {
+  fastify.post("/verify", {
+    schema: VerifyEmailDto,
+    config: {
+      // Limit OTP attempts per email
+      rateLimit: {
+        max: 5,
+        timeWindow: 600000, // 10 minutes
+        hook: 'preHandler',
+        keyGenerator: (req) => {
+          try {
+            const email = String(req.body?.email || '').toLowerCase().trim();
+            return email ? `verify:${email}` : req.ip;
+          } catch (_) {
+            return req.ip;
+          }
+        },
+      },
+    },
+  }, async (req, res) => {
     const { email, otp, role } = req.body;
 
     try {
+      const lowerEmail = String(email || "")
+        .trim()
+        .toLowerCase();
+      if (!lowerEmail || lowerEmail.length > 50) {
+        return res.code(422).send({ message: "Invalid email." });
+      }
+
       let Model;
       if (role === "admin") Model = Admin;
       else if (role === "user") Model = User;
       else if (role === "company") Model = Company;
       else return res.code(400).send({ message: "Invalid role" });
 
-      const exist = await Model.findOne({ email });
+      const exist = await Model.findOne({ email: lowerEmail });
       if (!exist) {
         return res.code(404).send({ message: "Account not found" });
       }
 
       const isOtpVerified = await validateOtp(exist._id, otp);
       if (!isOtpVerified) {
-        return res.code(401).send({ message: "Invalid or expired OTP" });
+        return res.code(422).send({ message: "Invalid or expired OTP" });
       }
 
       exist.isVerified = true;
@@ -100,7 +126,7 @@ async function authRoutes(fastify, option) {
 
       let profilePictureUrl = DEFAULT_AVATAR;
 
-      console.log(user);
+      // avoid logging full user objects
 
       if (user?.profilePicture) {
         try {
@@ -131,15 +157,42 @@ async function authRoutes(fastify, option) {
     }
   );
 
-  // TODO rate limit
-  fastify.post("/reverify", { schema: ReverifyDto }, async (req, res) => {
+  // Per-route rate limit: 1 request per 2 minutes (keyed by email if provided)
+  fastify.post("/reverify", {
+    schema: ReverifyDto,
+    config: {
+      rateLimit: {
+        max: 1,
+        timeWindow: 120000, // 2 minutes
+        hook: 'preHandler', // ensure req.body is available for keying
+        keyGenerator: (req) => {
+          try {
+            // Prefer email in body; if a token is provided, decode to extract email
+            if (req.body?.email) {
+              const email = String(req.body.email).toLowerCase().trim();
+              if (email) return `reverify:${email}`;
+            }
+            if (req.body?.token) {
+              try {
+                const decoded = jwt.verify(req.body.token, jwtSecret);
+                const email = String(decoded?.email || '').toLowerCase().trim();
+                if (email) return `reverify:${email}`;
+              } catch (_) {}
+            }
+            return req.ip;
+          } catch (_) {
+            return req.ip;
+          }
+        },
+      },
+    },
+  }, async (req, res) => {
     let email, role;
 
     // Method 1: From JWT token
     if (req.body.token) {
       try {
         const decoded = jwt.verify(req.body.token, jwtSecret);
-        console.log(decoded);
         email = decoded.email;
         role = decoded.role;
 
@@ -162,10 +215,17 @@ async function authRoutes(fastify, option) {
     }
 
     try {
+      const lowerEmail = String(email || "")
+        .trim()
+        .toLowerCase();
+      if (!lowerEmail || lowerEmail.length > 50) {
+        return res.code(422).send({ message: "Invalid email." });
+      }
+
       let user;
-      if (role === "user") user = await User.findOne({ email });
-      else if (role === "admin") user = await Admin.findOne({ email });
-      else if (role === "company") user = await Company.findOne({ email });
+      if (role === "user") user = await User.findOne({ email: lowerEmail });
+      else if (role === "admin") user = await Admin.findOne({ email: lowerEmail });
+      else if (role === "company") user = await Company.findOne({ email: lowerEmail });
       else return res.code(400).send({ message: "Invalid role" });
 
       if (!user) return res.code(404).send({ message: "Account not found" });
@@ -186,7 +246,26 @@ async function authRoutes(fastify, option) {
 
   fastify.post(
     "/forgot-password",
-    { schema: ForgotPasswordDto },
+    {
+      schema: ForgotPasswordDto,
+      config: {
+        rateLimit: {
+          max: 1,
+          timeWindow: 120000, // 2 minutes
+          hook: 'preHandler',
+          keyGenerator: (req) => {
+            try {
+              const email = (req.body && req.body.email)
+                ? String(req.body.email).toLowerCase().trim()
+                : null;
+              return email ? `forgot:${email}` : req.ip;
+            } catch (e) {
+              return req.ip;
+            }
+          },
+        },
+      },
+    },
     async (req, res) => {
       const { email, role } = req.body;
 
@@ -195,14 +274,21 @@ async function authRoutes(fastify, option) {
       }
 
       try {
+        const lowerEmail = String(email || "")
+          .trim()
+          .toLowerCase();
+        if (!lowerEmail || lowerEmail.length > 50) {
+          return res.code(422).send({ message: "Invalid email." });
+        }
+
         let user;
 
         if (role === "user") {
-          user = await User.findOne({ email });
+          user = await User.findOne({ email: lowerEmail });
         } else if (role === "admin") {
-          user = await Admin.findOne({ email });
+          user = await Admin.findOne({ email: lowerEmail });
         } else if (role === "company") {
-          user = await Company.findOne({ email });
+          user = await Company.findOne({ email: lowerEmail });
         } else {
           return res.code(400).send({ message: "Invalid role." });
         }
@@ -224,10 +310,26 @@ async function authRoutes(fastify, option) {
     }
   );
 
-  // TODO rate limit
   fastify.post(
     "/reset-password",
-    { schema: ResetPasswordDto },
+    { 
+      schema: ResetPasswordDto,
+      config: {
+        rateLimit: {
+          max: 3,
+          timeWindow: 600000, // 10 minutes
+          hook: 'preHandler',
+          keyGenerator: (req) => {
+            try {
+              const email = String(req.body?.email || '').toLowerCase().trim();
+              return email ? `reset:${email}` : req.ip;
+            } catch (_) {
+              return req.ip;
+            }
+          },
+        },
+      },
+    },
     async (req, res) => {
       const { email, role, token, newPassword } = req.body;
 
@@ -236,15 +338,20 @@ async function authRoutes(fastify, option) {
       }
 
       try {
-
+        const lowerEmail = String(email || "")
+          .trim()
+          .toLowerCase();
+        if (!lowerEmail || lowerEmail.length > 50) {
+          return res.code(422).send({ message: "Invalid email." });
+        }
 
         let user;
         if (role === "user") {
-          user = await User.findOne({ email });
+          user = await User.findOne({ email: lowerEmail });
         } else if (role === "admin") {
-          user = await Admin.findOne({ email });
+          user = await Admin.findOne({ email: lowerEmail });
         } else if (role === "company") {
-          user = await Company.findOne({ email });
+          user = await Company.findOne({ email: lowerEmail });
         } else {
           return res.code(400).send({ message: "Invalid role." });
         }

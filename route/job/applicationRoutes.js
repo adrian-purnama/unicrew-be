@@ -11,14 +11,10 @@ module.exports = async function (fastify) {
   const Notification = require("../../schema/notificationSchema");
   const { calculateMatchScore } = require("../../helper/jobFeedHelper");
 
-  const toTempUrl = async (req, assetId) => {
+  const toProtectedUrl = async (req, assetId) => {
     if (!assetId) return null;
     try {
-      const { url } = await verifyAndBuildAssetLink({
-        req,
-        assetId,
-        ttlSeconds: 300,
-      });
+      const { url } = await verifyAndBuildAssetLink({ req, assetId });
       return url || null;
     } catch {
       return null;
@@ -184,9 +180,9 @@ fastify.get(
           });
 
           const [cvUrl, portfolioUrl, avatarUrl] = await Promise.all([
-            toTempUrl(app.user.curriculumVitae),
-            toTempUrl(app.user.portfolio),
-            toTempUrl(app.user.profilePicture),
+            toProtectedUrl(req, app.user.curriculumVitae),
+            toProtectedUrl(req, app.user.portfolio),
+            toProtectedUrl(req, app.user.profilePicture),
           ]);
 
           const [recentReviews, ratingStats] = await Promise.all([

@@ -103,7 +103,12 @@ const userSchema = new mongoose.Schema(
       count: { type: Number, default: 0 },
     },
 
-    // Rate Limits & Attempts
+    trust: {
+      verified: { type: Boolean, default: false, index: true },
+      by: { type: mongoose.Schema.Types.ObjectId, ref: "Admin", default: null },
+      at: { type: Date, default: null },
+      notes: { type: String, maxlength: 500, default: "" },
+    },
     loginStats: {
       loginTries: { type: Number, required: true, default: 0 },
       loginLimit: { type: Number, required: true, default: 10 }, // fixed typo

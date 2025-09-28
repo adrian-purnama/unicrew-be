@@ -1,0 +1,15 @@
+{
+  "name": "cron",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "multilang-sentiment": "^2.0.0",
+    "vader-sentiment": "^1.1.3"
+  }
+}

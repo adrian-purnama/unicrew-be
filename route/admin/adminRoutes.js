@@ -23,6 +23,8 @@ const { roleAuth } = require("../../helper/roleAuth");
 const Company = require("../../schema/companySchema");
 const User = require("../../schema/userSchema");
 const Review = require("../../schema/reviewSchema");
+const JobPost = require("../../schema/jobPostSchema");
+const Application = require("../../schema/applicationSchema");
 const {
   normalizeName,
   escapeRegex,
@@ -667,6 +669,7 @@ async function adminRoutes(fastify, options) {
       const q = (req.query.q || "").trim();
       const isActive = toBool(req.query.isActive);
       const isVerified = toBool(req.query.isVerified);
+      const trusted = toBool(req.query.trusted); // trust.verified filter
 
       const $and = [{ role: "user" }];
       if (q) {
@@ -675,11 +678,15 @@ async function adminRoutes(fastify, options) {
       }
       if (isActive !== undefined) $and.push({ isActive });
       if (isVerified !== undefined) $and.push({ isVerified });
+      if (trusted !== undefined) $and.push({ "trust.verified": trusted });
 
       const filter = $and.length ? { $and } : {};
       const [items, total] = await Promise.all([
         User.find(filter)
-          .select("fullName email isVerified isActive createdAt")
+          .select(
+            "fullName email externalSystemId isVerified isActive createdAt rating.average rating.count trust.verified trust.by trust.at trust.notes"
+          )
+          .populate({ path: "trust.by", select: "email" })
           .sort({ createdAt: -1 })
           .skip(skip)
           .limit(limit)
@@ -726,6 +733,45 @@ async function adminRoutes(fastify, options) {
       const doc = await User.findByIdAndDelete(req.params.id);
       if (!doc) return res.code(404).send({ message: "User not found" });
       res.send({ ok: true });
+    }
+  );
+
+  fastify.patch(
+    "/users/:id/verify",
+    { preHandler: roleAuth(["admin"]) },
+    async (req, res) => {
+      const notes = (req.body?.notes || "").toString().slice(0, 500);
+      const doc = await User.findByIdAndUpdate(
+        req.params.id,
+        {
+          "trust.verified": true,
+          "trust.by": req.userId,
+          "trust.at": new Date(),
+          "trust.notes": notes,
+        },
+        { new: true }
+      ).select("fullName email trust");
+      if (!doc) return res.code(404).send({ message: "User not found" });
+      res.send({ ok: true, user: doc });
+    }
+  );
+
+  fastify.patch(
+    "/users/:id/unverify",
+    { preHandler: roleAuth(["admin"]) },
+    async (req, res) => {
+      const doc = await User.findByIdAndUpdate(
+        req.params.id,
+        {
+          "trust.verified": false,
+          "trust.by": null,
+          "trust.at": null,
+          "trust.notes": "",
+        },
+        { new: true }
+      ).select("fullName email trust");
+      if (!doc) return res.code(404).send({ message: "User not found" });
+      res.send({ ok: true, user: doc });
     }
   );
 
@@ -841,6 +887,119 @@ async function adminRoutes(fastify, options) {
       const doc = await Company.findByIdAndDelete(req.params.id);
       if (!doc) return res.code(404).send({ message: "Company not found" });
       res.send({ ok: true });
+    }
+  );
+
+
+  // ---------- JOBS ----------
+  fastify.get(
+    "/jobs",
+    { preHandler: roleAuth(["admin"]) },
+    async (req, res) => {
+      try {
+        console.log("Fetching job posts with filters...");
+        
+        const q = (req.query.q || "").trim();
+        const isActive = toBool(req.query.isActive);
+        const workType = req.query.workType;
+
+        const $and = [];
+        if (q) {
+          const r = regexOrNull(q);
+          $and.push({ $or: [{ title: r }, { description: r }] });
+        }
+        if (isActive !== undefined) $and.push({ isActive });
+        if (workType) $and.push({ workType });
+
+        const filter = $and.length ? { $and } : {};
+        console.log("Filter:", filter);
+        
+        const items = await JobPost.find(filter)
+          .select("title description workType isActive createdAt salaryRange")
+          .populate({ path: "company", select: "companyName email" })
+          .sort({ createdAt: -1 })
+          .lean();
+
+        console.log(`Found ${items.length} job posts`);
+        
+        res.send({ 
+          items, 
+          total: items.length, 
+          page: 1, 
+          pages: 1 
+        });
+      } catch (error) {
+        console.error("Error in /admin/jobs:", error);
+        res.code(500).send({ message: "Internal server error", error: error.message });
+      }
+    }
+  );
+
+  fastify.get(
+    "/jobs/:jobId/applications",
+    { preHandler: roleAuth(["admin"]) },
+    async (req, res) => {
+      try {
+        const { jobId } = req.params;
+        console.log(`Fetching applications for job: ${jobId}`);
+
+        // Simple query - get all applications for this job
+        const applications = await Application.find({ job: jobId })
+          .populate({ path: "user", select: "fullName email externalSystemId" })
+          .sort({ submittedAt: -1 })
+          .lean();
+
+        console.log(`Found ${applications.length} applications`);
+        res.send(applications);
+      } catch (error) {
+        console.error("Error in /admin/jobs/:jobId/applications:", error);
+        res.code(500).send({ message: "Internal server error", error: error.message });
+      }
+    }
+  );
+
+  fastify.patch(
+    "/jobs/:jobId/toggle-active",
+    { preHandler: roleAuth(["admin"]) },
+    async (req, res) => {
+      const job = await JobPost.findByIdAndUpdate(
+        req.params.jobId,
+        { $set: { isActive: !req.body.isActive } },
+        { new: true }
+      ).select("title isActive");
+      
+      if (!job) return res.code(404).send({ message: "Job not found" });
+      res.send({ ok: true, job });
+    }
+  );
+
+  fastify.delete(
+    "/jobs/:jobId",
+    { preHandler: roleAuth(["admin"]) },
+    async (req, res) => {
+      try {
+        const { jobId } = req.params;
+        console.log(`Deleting job and applications for job: ${jobId}`);
+
+        // First, delete all applications for this job
+        const deleteApplicationsResult = await Application.deleteMany({ job: jobId });
+        console.log(`Deleted ${deleteApplicationsResult.deletedCount} applications`);
+
+        // Then delete the job post
+        const job = await JobPost.findByIdAndDelete(jobId);
+        if (!job) {
+          return res.code(404).send({ message: "Job not found" });
+        }
+
+        console.log(`Successfully deleted job: ${job.title}`);
+        res.send({ 
+          ok: true, 
+          message: `Job and ${deleteApplicationsResult.deletedCount} applications deleted successfully` 
+        });
+      } catch (error) {
+        console.error("Error deleting job:", error);
+        res.code(500).send({ message: "Internal server error", error: error.message });
+      }
     }
   );
 

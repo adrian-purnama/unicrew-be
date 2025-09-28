@@ -262,12 +262,7 @@ async function userRoutes(fastify, options) {
       const buildUrl = async (assetId) => {
         if (!assetId) return null;
         try {
-          const { url } = await verifyAndBuildAssetLink({
-            req,
-            assetId,
-            ttlSeconds: 300,
-            reuse: true,
-          });
+          const { url } = await verifyAndBuildAssetLink({ req, assetId });
           return url || null;
         } catch {
           return null;

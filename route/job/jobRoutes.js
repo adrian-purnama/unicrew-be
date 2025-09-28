@@ -33,6 +33,26 @@ module.exports = async function (fastify) {
           salaryCurrency,
         } = req.body;
 
+        // Validate salary range
+        if (salaryMin && salaryMax && salaryMin > salaryMax) {
+          return res.code(400).send({ 
+            message: "Minimum salary cannot be greater than maximum salary" 
+          });
+        }
+
+        // Validate that both salary values are positive if provided
+        if (salaryMin && salaryMin < 0) {
+          return res.code(400).send({ 
+            message: "Minimum salary cannot be negative" 
+          });
+        }
+
+        if (salaryMax && salaryMax < 0) {
+          return res.code(400).send({ 
+            message: "Maximum salary cannot be negative" 
+          });
+        }
+
         const newJob = await JobPost.create({
           company: companyId,
           title,
@@ -279,6 +299,7 @@ fastify.get(
         const skillsQ = normalizeArray(q.skills);
         const workTypeQ = normalizeArray(q.workType);
         const industriesQ = normalizeArray(q.industries);
+        const verifiedParam = typeof q.verified !== 'undefined' ? String(q.verified).toLowerCase() : undefined; // 'true'|'false'|undefined
 
         const keyword = typeof q.keyword === "string" ? q.keyword.trim() : "";
         const keywordActive = keyword.length >= 2;
@@ -300,6 +321,7 @@ fastify.get(
           skillsQ.length > 0 ||
           workTypeQ.length > 0 ||
           industriesQ.length > 0 ||
+          verifiedParam !== undefined ||
           minSalaryActive ||
           !!locationQCleaned ||
           keywordActive;
@@ -317,7 +339,7 @@ fastify.get(
             if (ids.length) scopeMatch.requiredSkills = { $in: ids };
           }
           if (workTypeQ.length) scopeMatch.workType = { $in: workTypeQ };
-          if (industriesQ.length) scopeMatch.industry = { $in: industriesQ };
+          // Note: industry is a Company field; handled post-company $lookup
           if (minSalaryActive)
             scopeMatch["salaryRange.min"] = { $gte: minSalary };
           if (locationQCleaned) {
@@ -421,6 +443,18 @@ fastify.get(
             },
             { $unwind: "$company" },
           ];
+          // company-level filters (industries, admin verified)
+          const companyMatch = {};
+          if (industriesQ.length) {
+            const inds = industriesQ.map(toObjectId).filter(Boolean);
+            if (inds.length) companyMatch["company.industries"] = { $in: inds };
+          }
+          if (verifiedParam === 'true') {
+            companyMatch["company.trust.verified"] = true;
+          } else if (verifiedParam === 'false') {
+            companyMatch["company.trust.verified"] = { $ne: true };
+          }
+          if (Object.keys(companyMatch).length) pipe.push({ $match: companyMatch });
 
           if (postLookupKeyword) pipe.push({ $match: postLookupKeyword });
           pipe.push({ $count: "total" });
@@ -496,7 +530,22 @@ fastify.get(
               },
             },
             { $unwind: "$company" },
-            { $unwind: { path: "$company", preserveNullAndEmptyArrays: true } },
+            // company-level filters (industries, admin verified)
+            ...(function(){
+              const stages = [];
+              const companyMatch = {};
+              if (industriesQ.length) {
+                const inds = industriesQ.map(toObjectId).filter(Boolean);
+                if (inds.length) companyMatch["company.industries"] = { $in: inds };
+              }
+              if (verifiedParam === 'true') {
+                companyMatch["company.trust.verified"] = true;
+              } else if (verifiedParam === 'false') {
+                companyMatch["company.trust.verified"] = { $ne: true };
+              }
+              if (Object.keys(companyMatch).length) stages.push({ $match: companyMatch });
+              return stages;
+            })(),
             // required skills
             {
               $lookup: {
@@ -613,6 +662,11 @@ fastify.get(
             },
             // clean temp fields
             { $project: { provinsiDoc: 0, kabupatenDoc: 0, kecamatanDoc: 0 } },
+            // defensive de-duplication (in case any lookup causes fan-out)
+            { $group: { _id: "$_id", doc: { $first: "$$ROOT" } } },
+            { $replaceRoot: { newRoot: "$doc" } },
+            // re-apply stable sort after grouping
+            { $sort: randomize ? { _id: 1 } : { createdAt: -1, _id: -1 } },
             // paging
             ...(randomize ? [] : [{ $skip: skip }]),
             ...(randomize ? [] : [{ $limit: take }]),
@@ -679,8 +733,15 @@ fastify.get(
           matchedPage = latest;
         }
 
-        // combine in order
+        // combine in order and de-duplicate by _id
         let pageJobs = [...matchedPage, ...nonPage];
+        const seenIds = new Set();
+        pageJobs = pageJobs.filter((j) => {
+          const id = String(j._id);
+          if (seenIds.has(id)) return false;
+          seenIds.add(id);
+          return true;
+        });
 
         // =============== 10) ENRICH (matchScore for users) ===============
         if (user) {

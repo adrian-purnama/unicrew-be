@@ -1,42 +1,41 @@
 // routes/assetRoutes.js
 const Asset = require("../../schema/assetSchema");
-const AssetSession = require("../../schema/tempLinkSchema");
 const { streamFromGridFS } = require("../../helper/gridfsHelper");
+const { roleAuth } = require("../../helper/roleAuth");
+const { canViewAsset } = require("../../helper/assetAuth");
 
 module.exports = async function assetRoutes(fastify) {
-
   /**
-   * PUBLIC streaming via session id (no auth required)
-   * - Anyone with the link can access until expiry
+   * Direct streaming with authorization check on every request.
+   * Supports either:
+   *  - stateless signed token via query (?token=...)
+   *  - Authorization header (optionalAuth) + server-side permission check
    */
-  fastify.get("/assets/session/:sid", async (req, reply) => {
-  const sid = req.params.sid;
+  fastify.get("/assets/:assetId", { preHandler: roleAuth(["user", "company"]) }, async (req, reply) => {
+    try {
+      const { assetId } = req.params;
 
-  const session = await AssetSession.findById(sid).lean();
-  if (!session) return reply.code(404).send({ message: "Invalid link" });
-  if (session.expiresAt <= new Date()) return reply.code(410).send({ message: "Link expired" });
-  if (session.maxUses != null && session.useCount >= session.maxUses) {
-    return reply.code(410).send({ message: "Link exhausted" });
-  }
+      const asset = await Asset.findById(assetId).lean();
+      if (!asset) return reply.code(404).send({ message: "Asset not found" });
 
-  const asset = await Asset.findById(session.asset).lean();
-  if (!asset) return reply.code(404).send({ message: "Asset missing" });
+      const authorized = await canViewAsset(req.userId, req.userRole || "user", asset);
 
-  // non-blocking stats
-  AssetSession.updateOne(
-    { _id: session._id },
-    { $inc: { useCount: 1 }, $set: { lastAccessAt: new Date() } }
-  ).catch(() => {});
+      if (!authorized) return reply.code(403).send({ message: "Forbidden" });
 
-  const stream = streamFromGridFS(asset.gridfsId);
-  stream.on("error", () => reply.code(404).send({ message: "File not found" }));
+      const stream = streamFromGridFS(asset.gridfsId);
+      stream.on("error", () => reply.code(404).send({ message: "File not found" }));
 
-  reply
-    .header("Content-Type", asset.mime || "application/octet-stream")
-    .header("Cache-Control", "no-store")
-    .header("Content-Disposition", `inline; filename="${asset.filename || "file"}"`);
+      reply
+        .header("Content-Type", asset.mime || "application/octet-stream")
+        .header("Cache-Control", "no-store")
+        .header("Content-Disposition", `inline; filename="${asset.filename || "file"}"`);
 
-  return reply.send(stream);
-});
+      return reply.send(stream);
+    } catch (e) {
+      req.log.error({ err: e }, "Asset stream failed");
+      return reply.code(500).send({ message: "Failed to stream asset" });
+    }
+  });
 
+  // No legacy session route
 };

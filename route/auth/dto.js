@@ -7,7 +7,7 @@ const AdminRegisterDto = {
     type: "object",
     required: ["email", "password"],
     properties: {
-      email: { type: "string", format: "email" },
+      email: { type: "string", format: "email", maxLength: 50 },
       password: { type: "string", minLength: 6 },
     },
     additionalProperties: false,
@@ -33,6 +33,7 @@ const UserRegisterDto = {
         type: "string",
         format: "email",
         pattern: ".*\\.(ac\\.id|edu)$",
+        maxLength: 50,
       },
       password: { type: "string", minLength: 6 },
       universityId: objectId,
@@ -68,7 +69,7 @@ const CompanyRegisterDto = {
         minItems: 1,
         maxItems: 3,
       },
-      description: { type: "string" },
+      description: { type: "string", maxLength: 200 },
       location: {
         type: "object",
         required: ["provinsiId", "kabupatenId", "kecamatanId"],
@@ -89,7 +90,7 @@ const CompanyRegisterDto = {
         },
         additionalProperties: false,
       },
-      email: { type: "string", format: "email" },
+      email: { type: "string", format: "email", maxLength: 50 },
       password: { type: "string", minLength: 6 },
     },
     additionalProperties: false,
@@ -101,7 +102,7 @@ const LoginDto = {
     type: "object",
     required: ["email", "password", "role"],
     properties: {
-      email: { type: "string", format: "email" },
+      email: { type: "string", format: "email", maxLength: 50 },
       password: { type: "string", minLength: 6 },
       role: { type: "string", enum: ["user", "company", "admin"] },
     },
@@ -114,7 +115,7 @@ const VerifyEmailDto = {
     type: "object",
     required: ["email", "otp", "role"],
     properties: {
-      email: { type: "string", format: "email" },
+      email: { type: "string", format: "email", maxLength: 50 },
       otp: { type: "string", minLength: 6 },
       role: { type: "string", enum: ["user", "company", "admin"] },
     },
@@ -142,7 +143,7 @@ const ReverifyDto = {
         type: "object",
         required: ["email", "role"],
         properties: {
-          email: { type: "string", format: "email" },
+          email: { type: "string", format: "email", maxLength: 50 },
           role: { type: "string", enum: ["user", "company", "admin"] },
         },
         additionalProperties: false,
@@ -156,7 +157,7 @@ const ForgotPasswordDto = {
     type: "object",
     required: ["email", "role"],
     properties: {
-      email: { type: "string", format: "email" },
+      email: { type: "string", format: "email", maxLength: 50 },
       role: { type: "string", enum: ["user", "company", "admin"] },
     },
     additionalProperties: false,
@@ -168,7 +169,7 @@ const ResetPasswordDto = {
     type: "object",
     required: ["email", "role", "token", "newPassword"],
     properties: {
-      email: { type: "string", format: "email" },
+      email: { type: "string", format: "email", maxLength: 50 },
       role: { type: "string", enum: ["user", "company", "admin"] },
       token: { type: "string", minLength: 6 },
       newPassword: { type: "string", minLength: 6 },

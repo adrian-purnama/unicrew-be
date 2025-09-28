@@ -125,12 +125,7 @@ module.exports = async function companyRoutes(fastify) {
 
       if (company.profilePicture) {
         try {
-          const { url } = await verifyAndBuildAssetLink({
-            req,
-            assetId: company.profilePicture,
-            ttlSeconds: 300,
-            reuse: true,
-          });
+          const { url } = await verifyAndBuildAssetLink({ req, assetId: company.profilePicture });
           company.profilePicture = url || null;
         } catch {
           company.profilePicture = null;

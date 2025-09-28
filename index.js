@@ -33,6 +33,11 @@ const saveRoutes = require("./route/job/saveRoutes");
 const reviewRoutes = require("./route/job/reviewRoutes");
 const jobRoutes = require("./route/job/jobRoutes");
 const assetRoutes = require("./route/asset/assetRoutes");
+const cvRoutes = require("./route/cv/cvRoutes");
+const fastifyRateLimit = require("@fastify/rate-limit");
+const User = require("./schema/userSchema");
+const Company = require("./schema/companySchema");
+const Admin = require("./schema/adminSchema");
 
 dotenv.config();
 const MONGODB_URI = process.env.MONGODB_LINK;
@@ -47,20 +52,38 @@ async function startServer() {
     fastify.log.info("✅ MongoDB connected");
     console.log("✅ MongoDB connected");
 
- await fastify.register(require("@fastify/cors"), {
-  origin: (origin, cb) => {
-    const allowed = new Set([
-      FE_LINK
-    ]);
-    if (!origin) return cb(null, true);
-    cb(null, allowed.has(origin));
-  },
-  methods: ["GET","POST","PUT","DELETE","OPTIONS","PATCH"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  exposedHeaders: ["Content-Disposition"],
-  credentials: false,
-});
+    // Ensure TTL indexes to auto-delete unverified accounts after 15 days
+    try {
+      const ttlOptions = {
+        expireAfterSeconds: 1296000, // 15 days
+        partialFilterExpression: { isVerified: false },
+      };
+      await Promise.all([
+        User.collection.createIndex({ createdAt: 1 }, ttlOptions),
+        Company.collection.createIndex({ createdAt: 1 }, ttlOptions),
+        Admin.collection.createIndex({ createdAt: 1 }, ttlOptions),
+      ]);
+      fastify.log.info("TTL indexes ensured (User, Company, Admin)");
+    } catch (e) {
+      fastify.log.error(e, "Failed to ensure TTL indexes");
+    }
 
+    await fastify.register(require("@fastify/cors"), {
+      origin: (origin, cb) => {
+        const allowed = new Set([FE_LINK]);
+        if (!origin) return cb(null, true);
+        cb(null, allowed.has(origin));
+      },
+      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+      allowedHeaders: ["Content-Type", "Authorization"],
+      exposedHeaders: ["Content-Disposition"],
+      credentials: false,
+    });
+
+await fastify.register(fastifyRateLimit, {
+  max: 100,
+  timeWindow: '1 minute',
+});
 
     await fastify.register(swagger, {
       swagger: {
@@ -69,7 +92,7 @@ async function startServer() {
           description: "API documentation for my Fastify app",
           version: "1.0.0",
         },
-        host: "localhost:3000",
+        host: "localhost:4001",
         schemes: ["http"],
         consumes: ["application/json"],
         produces: ["application/json"],
@@ -105,6 +128,7 @@ async function startServer() {
     await fastify.register(saveRoutes, { prefix: "/save" });
     await fastify.register(reviewRoutes, { prefix: "/review" });
     await fastify.register(assetRoutes);
+    await fastify.register(cvRoutes, { prefix: "/cv" });
 
     await fastify.register(chatSocket);
     await fastify.register(chatRoutes, { prefix: "/chat" });

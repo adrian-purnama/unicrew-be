@@ -18,13 +18,13 @@ const {
 } = require("../../helper/validationHelper");
 
 const {
-  userRegisterDto,
-  companyRegisterDto,
+  UserRegisterDto,
+  CompanyRegisterDto,
   AdminRegisterDto,
 } = require("./dto");
 
 const jwtSecret = process.env.JWT_SECRET;
-const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS);
+const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS) || 10;
 const GMAIL_MASTER = process.env.GMAIL_MASTER
 
 // Small helper: don’t let email sending hang forever
@@ -38,7 +38,27 @@ const sendWithTimeout = (fn, ms = 8000) =>
 
 async function registerRoutes(fastify) {
   // ---------- ADMIN REGISTER (no transactions) ----------
-  fastify.post("/admin", { schema: AdminRegisterDto }, async (req, res) => {
+  fastify.post(
+    "/admin",
+    {
+      schema: AdminRegisterDto,
+      config: {
+        rateLimit: {
+          max: 3,
+          timeWindow: 120000, // 2 minutes
+          hook: 'preHandler',
+          keyGenerator: (req) => {
+            try {
+              const email = String(req.body?.email || '').toLowerCase().trim();
+              return email ? `register-admin:${email}` : req.ip;
+            } catch (_) {
+              return req.ip;
+            }
+          },
+        },
+      },
+    },
+    async (req, res) => {
     const { email, password } = req.body;
     try {
       const lowerEmail = email.toLowerCase().trim();
@@ -68,14 +88,38 @@ async function registerRoutes(fastify) {
         .code(201)
         .send({ message: "Admin created successfully, please verify email" });
     } catch (err) {
+      if (err && err.code === 11000) {
+        return res.code(409).send({ message: "Admin already registered" });
+      }
       console.error("[/register/admin] failed:", err?.message || err);
       return res.code(500).send({ message: "Internal server error" });
     }
-  });
+  }
+  );
 
   // ---------- USER REGISTER ----------
     // TODO chech front end max car email 50 and ends with ac.id or .edu
-  fastify.post("/user", { schema: userRegisterDto }, async (req, res) => {
+  fastify.post(
+    "/user",
+    {
+      schema: UserRegisterDto,
+      config: {
+        rateLimit: {
+          max: 3,
+          timeWindow: 120000,
+          hook: 'preHandler',
+          keyGenerator: (req) => {
+            try {
+              const email = String(req.body?.email || '').toLowerCase().trim();
+              return email ? `register-user:${email}` : req.ip;
+            } catch (_) {
+              return req.ip;
+            }
+          },
+        },
+      },
+    },
+    async (req, res) => {
     const {
       fullName,
       birthDate,
@@ -212,6 +256,9 @@ async function registerRoutes(fastify) {
         },
       });
     } catch (err) {
+      if (err && err.code === 11000) {
+        return res.code(409).send({ message: "User already registered" });
+      }
       if (
         err &&
         typeof err.message === "string" &&
@@ -222,11 +269,32 @@ async function registerRoutes(fastify) {
       console.error("[/register/user] failed:", err?.message || err);
       return res.code(500).send({ message: "Internal server error" });
     }
-  });
+  }
+  );
 
   // ---------- COMPANY REGISTER (no transactions) ----------
   // TODO chekc front end max car des 200 and email 50
-  fastify.post("/company", { schema: companyRegisterDto }, async (req, res) => {
+  fastify.post(
+    "/company",
+    {
+      schema: CompanyRegisterDto,
+      config: {
+        rateLimit: {
+          max: 3,
+          timeWindow: 120000,
+          hook: 'preHandler',
+          keyGenerator: (req) => {
+            try {
+              const email = String(req.body?.email || '').toLowerCase().trim();
+              return email ? `register-company:${email}` : req.ip;
+            } catch (_) {
+              return req.ip;
+            }
+          },
+        },
+      },
+    },
+    async (req, res) => {
     const {
       companyName,
       industries,
@@ -291,6 +359,9 @@ async function registerRoutes(fastify) {
         .code(201)
         .send({ message: "Company registered, please verify email" });
     } catch (err) {
+      if (err && err.code === 11000) {
+        return res.code(409).send({ message: "Company already registered" });
+      }
       if (
         err &&
         typeof err.message === "string" &&
@@ -301,7 +372,8 @@ async function registerRoutes(fastify) {
       console.error("[/register/company] failed:", err?.message || err);
       return res.code(500).send({ message: "Internal server error" });
     }
-  });
+  }
+  );
 }
 
 module.exports = registerRoutes;

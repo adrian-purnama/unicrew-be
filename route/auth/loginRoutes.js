@@ -17,9 +17,31 @@ const roleModelMap = {
 };
 
 function loginRoutes(fastify, options) {
-  fastify.post("/login", { schema: LoginDto }, async (req, res) => {
-    const { email, password, role } = req.body;
-    console.log(role);
+  fastify.post(
+    "/login",
+    {
+      schema: LoginDto,
+      // Per-route rate limit: throttle brute force per email+IP
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: 600000, // 10 minutes
+          hook: 'preHandler',
+          keyGenerator: (req) => {
+            try {
+              const lower = String(req.body?.email || '')
+                .trim()
+                .toLowerCase();
+              return lower ? `login:${lower}:${req.ip}` : `login:${req.ip}`;
+            } catch (_) {
+              return `login:${req.ip}`;
+            }
+          },
+        },
+      },
+    },
+    async (req, res) => {
+      const { email, password, role } = req.body;
 
     try {
       const lowerEmail = String(email || "")
@@ -34,14 +56,17 @@ function loginRoutes(fastify, options) {
       if (!Model) return res.code(400).send({ message: "Invalid role" });
 
       const user = await Model.findOne({ email: lowerEmail });
-      if (!user) return res.code(401).send({ message: "Account not found" });
-        console.log(user)
+      // Use generic error to avoid account enumeration
+      if (!user) return res.code(401).send({ message: "Invalid email or password" });
+
+      const isValid = await bcrypt.compare(password, user.password);
+      if (!isValid)
+        return res.code(401).send({ message: "Invalid email or password" });
+
+      // Only after a successful password check, enforce admin verification
       if (user.role === "admin" && user.isVerified === false) {
         return res.code(401).send({ message: "Admin unverified" });
       }
-      const isValid = await bcrypt.compare(password, user.password);
-      if (!isValid)
-        return res.code(401).send({ message: "Incorrect password" });
 
       const token = jwt.sign(
         {
@@ -63,7 +88,8 @@ function loginRoutes(fastify, options) {
       console.error(err);
       return res.code(500).send({ message: "Internal server error" });
     }
-  });
+  }
+  );
 }
 
 module.exports = loginRoutes;
