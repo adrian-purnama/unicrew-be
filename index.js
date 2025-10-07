@@ -38,6 +38,8 @@ const fastifyRateLimit = require("@fastify/rate-limit");
 const User = require("./schema/userSchema");
 const Company = require("./schema/companySchema");
 const Admin = require("./schema/adminSchema");
+const CVMakeResult = require("./schema/cvMakeResultSchema");
+const { setupTTLIndex } = require("./helper/gridfsHelper");
 
 dotenv.config();
 const MONGODB_URI = process.env.MONGODB_LINK;
@@ -67,6 +69,9 @@ async function startServer() {
     } catch (e) {
       fastify.log.error(e, "Failed to ensure TTL indexes");
     }
+
+    // Setup TTL index for CV files (30-minute auto-deletion)
+    await setupTTLIndex();
 
     await fastify.register(require("@fastify/cors"), {
       origin: (origin, cb) => {

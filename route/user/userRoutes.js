@@ -141,6 +141,16 @@ async function userRoutes(fastify, options) {
           : null;
 
         const updates = { ...req.body };
+        
+        // Trim and validate aboutMe field
+        if (updates.aboutMe !== undefined) {
+          updates.aboutMe = updates.aboutMe ? updates.aboutMe.trim() : "";
+          if (updates.aboutMe.length > 1000) {
+            return reply.code(400).send({ 
+              message: "About section cannot exceed 1000 characters." 
+            });
+          }
+        }
 
         // Prepare skills update (set full array so validator runs)
         let toAdd = [];

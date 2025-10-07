@@ -5,6 +5,11 @@ const crypto = require('crypto');
 const PDFDocument = require('pdfkit');
 const Groq = require('groq-sdk');
 const { roleAuth } = require('../../helper/roleAuth');
+const { uploadCVToGridFS, deleteCVFromGridFS, streamCVFromGridFS, getCVMetadata, setupTTLIndex, getCVBucket } = require('../../helper/gridfsHelper');
+const mongoose = require('mongoose');
+const { getMaxCVGenerations } = require('../../helper/subscriptionHelper');
+const User = require('../../schema/userSchema');
+const CVMakeResult = require('../../schema/cvMakeResultSchema');
 
 const dotenv = require("dotenv");
 dotenv.config();
@@ -268,15 +273,9 @@ function enhanceWorkExperienceFallback(description, position, company) {
 }
 
 
-async function generatePDF(cvData, pdfId) {
-  const tempDir = path.join(__dirname, '../../temp');
-  if (!fs.existsSync(tempDir)) {
-    fs.mkdirSync(tempDir, { recursive: true });
-  }
+async function generatePDF(cvData, cvResultId, userId) {
+  console.log(`Generating PDF with CV Result ID: ${cvResultId} for user: ${userId}`);
   
-  const pdfPath = path.join(tempDir, `${pdfId}.pdf`);
-  
-
   const doc = new PDFDocument({
     size: 'A4',
     margins: {
@@ -287,9 +286,9 @@ async function generatePDF(cvData, pdfId) {
     }
   });
   
-
-  const stream = fs.createWriteStream(pdfPath);
-  doc.pipe(stream);
+  // Collect PDF data in memory instead of writing to file
+  const chunks = [];
+  doc.on('data', chunk => chunks.push(chunk));
   
   const { personalInfo, summary, experience, education, softSkills, hardSkills, certifications, languages } = cvData;
   
@@ -509,18 +508,20 @@ async function generatePDF(cvData, pdfId) {
   // Finalize the PDF
   doc.end();
   
-  // Wait for the stream to finish
+  // Wait for all chunks to be collected
   await new Promise((resolve, reject) => {
-    stream.on('finish', resolve);
-    stream.on('error', reject);
+    doc.on('end', resolve);
+    doc.on('error', reject);
   });
   
-  // Verify the generated PDF
-  const fileBuffer = fs.readFileSync(pdfPath);
-  const isPDF = fileBuffer.toString('hex', 0, 4) === '25504446'; // PDF magic number
+  // Combine all chunks into a single buffer
+  const pdfBuffer = Buffer.concat(chunks);
   
-  console.log(`PDF generated successfully: ${pdfPath}`);
-  console.log(`File size: ${fs.statSync(pdfPath).size} bytes`);
+  // Verify it's a valid PDF
+  const isPDF = pdfBuffer.toString('hex', 0, 4) === '25504446'; // PDF magic number
+  
+  console.log(`PDF generated successfully in memory`);
+  console.log(`File size: ${pdfBuffer.length} bytes`);
   console.log(`Is valid PDF: ${isPDF}`);
   
   if (!isPDF) {
@@ -528,7 +529,18 @@ async function generatePDF(cvData, pdfId) {
     throw new Error('Generated file is not a valid PDF');
   }
   
-  return pdfPath;
+  // Upload to GridFS with TTL
+  const gridfsId = await uploadCVToGridFS({
+    buffer: pdfBuffer,
+    filename: `cv-${cvResultId}.pdf`,
+    contentType: 'application/pdf',
+    userId: userId
+  });
+  
+  console.log(`PDF uploaded to GridFS with ID: ${gridfsId}`);
+  console.log(`PDF will auto-expire in 30 minutes via MongoDB TTL`);
+  
+  return { gridfsId, cvResultId, fileSize: pdfBuffer.length };
 }
 
 // Generate HTML content for CV
@@ -659,7 +671,7 @@ module.exports = async function cvRoutes(fastify, options) {
   fastify.post(
     '/submit',
     {
-      preHandler: roleAuth(['admin']), // Require user or admin authentication
+      preHandler: roleAuth(['user', 'admin']), // Require user or admin authentication
       schema: {
         body: {
           type: 'object',
@@ -787,10 +799,72 @@ module.exports = async function cvRoutes(fastify, options) {
     async (req, res) => {
       try {
         const { cvData } = req.body;
-        const userId = req.user?.id || 'anonymous';
+        const userId = req.user?._id;
+        const userRole = req.user?.role;
+        
+        console.log('=== CV SUBMISSION DEBUG ===');
+        console.log('req.user:', req.user);
+        console.log('userId from req.user._id:', userId);
+        console.log('req.user.role:', userRole);
+        
+        if (!userId) {
+          return res.code(401).send({
+            success: false,
+            message: 'Authentication required'
+          });
+        }
+
+        // Check if user is admin - admins bypass all checks
+        const isAdmin = userRole === 'admin';
+        
+        if (isAdmin) {
+          console.log('Admin user detected - bypassing all subscription checks');
+        } else {
+          // For regular users, check subscription limits
+          const user = await User.findById(userId);
+          console.log('User found in database:', !!user);
+          console.log('User details:', user ? { id: user._id, email: user.email, role: user.role, subscription: user.subscription } : 'Not found');
+          
+          if (!user) {
+            return res.code(404).send({
+              success: false,
+              message: 'User not found',
+              debug: {
+                userId,
+                userRole: userRole
+              }
+            });
+          }
+
+          // Check CV generation limits based on subscription for regular users
+          const maxGenerations = getMaxCVGenerations(user.subscription);
+          
+          // Count existing CV generations for this user
+          const existingCVs = await CVMakeResult.countDocuments({ userId });
+          
+          if (existingCVs >= maxGenerations) {
+            return res.code(403).send({
+              success: false,
+              message: `CV generation limit reached. You can generate up to ${maxGenerations} CVs with your ${user.subscription} subscription. Please upgrade your subscription to generate more CVs.`,
+              limit: maxGenerations,
+              current: existingCVs,
+              subscription: user.subscription
+            });
+          }
+          
+          console.log('Subscription check passed:', {
+            userId,
+            subscription: user.subscription,
+            maxGenerations,
+            currentCVs: existingCVs,
+            remaining: maxGenerations - existingCVs
+          });
+        }
         
         console.log('=== CV SUBMISSION ===');
         console.log('User ID:', userId);
+        console.log('User role:', userRole);
+        console.log('Is admin:', isAdmin);
         console.log('CV Data received:', JSON.stringify(cvData, null, 2));
         
         // Log each section
@@ -851,34 +925,57 @@ module.exports = async function cvRoutes(fastify, options) {
         
         console.log('\n=== END CV SUBMISSION ===\n');
         
-        // Generate PDF
-        const pdfId = crypto.randomUUID();
-        const pdfPath = await generatePDF(cvData, pdfId);
+        // Create CV result record in MongoDB first
+        const cvResult = new CVMakeResult({
+          userId: userId,
+          cvData: cvData,
+          status: 'generating'
+        });
         
-        // Schedule cleanup after 10 minutes
-        setTimeout(() => {
-          try {
-            if (fs.existsSync(pdfPath)) {
-              fs.unlinkSync(pdfPath);
-              console.log(`PDF ${pdfId} deleted after 10 minutes`);
-            }
-          } catch (error) {
-            console.error(`Error deleting PDF ${pdfId}:`, error);
-          }
-        }, 10 * 60 * 1000); // 10 minutes
+        await cvResult.save();
+        const cvResultId = cvResult._id;
+        
+        console.log(`Created CV result record with ID: ${cvResultId}`);
+        
+        // Generate PDF
+        let gridfsId, fileSize;
+        try {
+          const result = await generatePDF(cvData, cvResultId, userId);
+          gridfsId = result.gridfsId;
+          fileSize = result.fileSize;
+        } catch (pdfError) {
+          console.error('PDF generation failed:', pdfError);
+          // Update CV result with error status
+          cvResult.status = 'failed';
+          cvResult.errorMessage = pdfError.message;
+          await cvResult.save();
+          
+          return res.code(500).send({
+            success: false,
+            message: 'Failed to generate PDF',
+            error: pdfError.message
+          });
+        }
         
         // Get the base URL from the request
         const protocol = req.protocol || 'http';
         const host = req.headers.host || 'localhost:4001';
         const baseUrl = `${protocol}://${host}`;
-        const downloadUrl = `${baseUrl}/cv/download/${pdfId}`;
+        const downloadUrl = `${baseUrl}/cv/download/${cvResultId}`;
+        
+        // Update CV result with GridFS info
+        cvResult.gridfsId = gridfsId;
+        cvResult.filename = `cv-${cvResultId}.pdf`;
+        cvResult.downloadUrl = downloadUrl;
+        cvResult.status = 'completed';
+        cvResult.fileSize = fileSize;
+        await cvResult.save();
         
         console.log('=== PDF GENERATION COMPLETE ===');
-        console.log('PDF ID:', pdfId);
+        console.log('CV Result ID:', cvResultId);
+        console.log('GridFS ID:', gridfsId);
         console.log('Download URL:', downloadUrl);
-        console.log('PDF Path:', pdfPath);
-        console.log('File exists:', fs.existsSync(pdfPath));
-        console.log('File size:', fs.statSync(pdfPath).size, 'bytes');
+        console.log('Expires At:', cvResult.expiresAt);
         
         res.send({
           success: true,
@@ -886,8 +983,10 @@ module.exports = async function cvRoutes(fastify, options) {
           timestamp: new Date().toISOString(),
           userId: userId,
           dataSize: JSON.stringify(cvData).length,
-          pdfId: pdfId,
-          downloadUrl: downloadUrl
+          cvResultId: cvResultId,
+          downloadUrl: downloadUrl,
+          expiresAt: cvResult.expiresAt,
+          minutesRemaining: cvResult.minutesRemaining
         });
         
       } catch (error) {
@@ -903,55 +1002,277 @@ module.exports = async function cvRoutes(fastify, options) {
 
   // Download PDF route
   fastify.get(
-    '/download/:pdfId',
+    '/download/:cvResultId',
     {
       preHandler: roleAuth(['user', 'admin']), // Require user or admin authentication
     },
     async (req, res) => {
       try {
-        const { pdfId } = req.params;
-        const pdfPath = path.join(__dirname, '../../temp', `${pdfId}.pdf`);
+        const { cvResultId } = req.params;
+        const userId = req.user?.id;
         
-        console.log(`Attempting to download PDF: ${pdfPath}`);
+        console.log(`Attempting to download CV with Result ID: ${cvResultId} by user: ${userId}`);
         
-        if (!fs.existsSync(pdfPath)) {
-          console.log('PDF file not found:', pdfPath);
-          return res.code(404).send({
-            success: false,
-            message: 'PDF not found or expired'
-          });
+        try {
+          // First, find the CV result record
+          const cvResult = await CVMakeResult.findById(cvResultId);
+          
+          if (!cvResult) {
+            console.log(`CV Result ${cvResultId} not found - likely expired and deleted by TTL`);
+            return res.code(404).send({
+              success: false,
+              message: 'CV not found or has expired'
+            });
+          }
+          
+          // Check if CV has expired
+          if (cvResult.isExpired || cvResult.status === 'expired') {
+            console.log(`CV ${cvResultId} has expired at ${cvResult.expiresAt}`);
+            // Update status to expired
+            cvResult.status = 'expired';
+            await cvResult.save();
+            return res.code(404).send({
+              success: false,
+              message: 'CV has expired'
+            });
+          }
+          
+          // Check if CV is ready for download
+          if (cvResult.status !== 'completed') {
+            return res.code(400).send({
+              success: false,
+              message: `CV is still ${cvResult.status}. Please wait and try again.`
+            });
+          }
+          
+          // Optional: Check if user is authorized to download this specific CV
+          // For now, any authenticated user can download any CV within the 30-minute window
+          console.log(`CV ${cvResultId} is valid, expires at ${cvResult.expiresAt}`);
+          
+          // Check if gridfsId exists
+          if (!cvResult.gridfsId) {
+            console.log(`CV ${cvResultId} has no gridfsId`);
+            return res.code(404).send({
+              success: false,
+              message: 'CV file not found'
+            });
+          }
+          
+          console.log(`Attempting to stream CV from GridFS with ID: ${cvResult.gridfsId}`);
+          
+          // Check if the file exists in GridFS
+          const metadata = await getCVMetadata(cvResult.gridfsId);
+          if (!metadata) {
+            console.log(`CV file not found in GridFS with ID: ${cvResult.gridfsId}`);
+            return res.code(404).send({
+              success: false,
+              message: 'CV file not found in storage'
+            });
+          }
+          
+          console.log(`CV file found in GridFS: ${metadata.filename} (${metadata.length} bytes)`);
+          
+          // Verify the file is not empty
+          if (metadata.length === 0) {
+            console.log('CV file is empty in GridFS');
+            return res.code(404).send({
+              success: false,
+              message: 'CV file is empty or corrupted'
+            });
+          }
+          
+          // Read the file as a buffer using Promise-based approach
+          console.log('Attempting to read CV file as buffer...');
+          const bucket = getCVBucket();
+          
+          const readFileAsBuffer = () => {
+            return new Promise((resolve, reject) => {
+              const chunks = [];
+              const downloadStream = bucket.openDownloadStream(new mongoose.Types.ObjectId(cvResult.gridfsId));
+              
+              downloadStream.on('data', (chunk) => {
+                console.log(`Received chunk: ${chunk.length} bytes`);
+                chunks.push(chunk);
+              });
+              
+              downloadStream.on('end', () => {
+                console.log(`Stream ended. Total chunks: ${chunks.length}, Total size: ${chunks.reduce((sum, chunk) => sum + chunk.length, 0)} bytes`);
+                
+                if (chunks.length === 0) {
+                  reject(new Error('No data received from GridFS stream'));
+                  return;
+                }
+                
+                const buffer = Buffer.concat(chunks);
+                console.log(`Buffer created: ${buffer.length} bytes`);
+                resolve(buffer);
+              });
+              
+              downloadStream.on('error', (error) => {
+                console.error('GridFS download error:', error);
+                reject(error);
+              });
+            });
+          };
+          
+          try {
+            const buffer = await readFileAsBuffer();
+            console.log(`Sending CV buffer: ${buffer.length} bytes`);
+            
+            // Set headers BEFORE sending the response
+            res.header('Content-Type', 'application/pdf');
+            res.header('Content-Disposition', `attachment; filename="${cvResult.filename}"`);
+            res.header('Cache-Control', 'no-cache');
+            res.header('X-Expires-At', cvResult.expiresAt.toISOString());
+            res.header('X-Minutes-Remaining', cvResult.minutesRemaining.toString());
+            res.header('Content-Length', buffer.length);
+            
+            // Send the buffer
+            res.send(buffer);
+            
+            try {
+              // Increment download count after successful download
+              await cvResult.incrementDownload();
+              console.log(`Download count incremented for CV ${cvResultId}`);
+            } catch (saveError) {
+              console.error('Error incrementing download count:', saveError);
+            }
+            
+          } catch (bufferError) {
+            console.error('Error reading file as buffer:', bufferError);
+            return res.code(404).send({
+              success: false,
+              message: 'CV file not found or corrupted'
+            });
+          }
+          
+        } catch (gridfsError) {
+          console.error('GridFS error:', gridfsError);
+          if (!res.headersSent) {
+            return res.code(404).send({
+              success: false,
+              message: 'CV not found or expired'
+            });
+          }
+          // If headers are already sent, just end the response
+          if (!res.raw.destroyed) {
+            res.raw.end();
+          }
+          return; // Important: return here to prevent further execution
         }
-        
-        // Verify it's actually a PDF file
-        const fileBuffer = fs.readFileSync(pdfPath);
-        const isPDF = fileBuffer.toString('hex', 0, 4) === '25504446'; // PDF magic number
-        
-        console.log(`File exists: ${fs.existsSync(pdfPath)}`);
-        console.log(`File size: ${fs.statSync(pdfPath).size} bytes`);
-        console.log(`Is valid PDF: ${isPDF}`);
-        
-        if (!isPDF) {
-          console.error('Warning: File is not a valid PDF!');
-          return res.code(400).send({
-            success: false,
-            message: 'Invalid PDF file'
-          });
-        }
-        
-        // Set proper headers for PDF download
-        res.header('Content-Type', 'application/pdf');
-        res.header('Content-Disposition', `attachment; filename="CV_${pdfId}.pdf"`);
-        res.header('Content-Length', fileBuffer.length);
-        res.header('Cache-Control', 'no-cache');
-        
-        // Send the file as binary data
-        res.send(fileBuffer);
         
       } catch (error) {
-        console.error('Error downloading PDF:', error);
+        console.error('Error downloading CV:', error);
+        if (!res.headersSent) {
+          return res.code(500).send({
+            success: false,
+            message: 'Failed to download CV',
+            error: error.message || 'Unknown error occurred'
+          });
+        }
+      }
+    }
+  );
+
+  // Check CV status route
+  fastify.get(
+    '/status/:cvResultId',
+    {
+      preHandler: roleAuth(['user', 'admin']),
+    },
+    async (req, res) => {
+      try {
+        const { cvResultId } = req.params;
+        const userId = req.user?.id;
+        
+        console.log(`Checking CV status for ID: ${cvResultId} by user: ${userId}`);
+        
+        const cvResult = await CVMakeResult.findById(cvResultId);
+        
+        if (!cvResult) {
+          return res.code(404).send({
+            success: false,
+            message: 'CV not found'
+          });
+        }
+        
+        res.send({
+          success: true,
+          cvResultId: cvResult._id,
+          status: cvResult.status,
+          expiresAt: cvResult.expiresAt,
+          minutesRemaining: cvResult.minutesRemaining,
+          isExpired: cvResult.isExpired,
+          downloadCount: cvResult.downloadCount,
+          lastDownloadedAt: cvResult.lastDownloadedAt,
+          errorMessage: cvResult.errorMessage,
+          createdAt: cvResult.createdAt,
+          updatedAt: cvResult.updatedAt
+        });
+        
+      } catch (error) {
+        console.error('Error checking CV status:', error);
         res.code(500).send({
           success: false,
-          message: 'Failed to download PDF',
+          message: 'Failed to check CV status',
+          error: error.message
+        });
+      }
+    }
+  );
+
+  // List user's CVs route
+  fastify.get(
+    '/list',
+    {
+      preHandler: roleAuth(['user', 'admin']),
+    },
+    async (req, res) => {
+      try {
+        const userId = req.user?.id;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const skip = (page - 1) * limit;
+        
+        console.log(`Listing CVs for user: ${userId}, page: ${page}, limit: ${limit}`);
+        
+        const cvs = await CVMakeResult.find({ userId })
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .select('-cvData'); // Exclude cvData to reduce response size
+        
+        const total = await CVMakeResult.countDocuments({ userId });
+        
+        res.send({
+          success: true,
+          cvs: cvs.map(cv => ({
+            cvResultId: cv._id,
+            status: cv.status,
+            expiresAt: cv.expiresAt,
+            minutesRemaining: cv.minutesRemaining,
+            isExpired: cv.isExpired,
+            downloadCount: cv.downloadCount,
+            lastDownloadedAt: cv.lastDownloadedAt,
+            filename: cv.filename,
+            fileSize: cv.fileSize,
+            downloadUrl: cv.downloadUrl,
+            createdAt: cv.createdAt,
+            updatedAt: cv.updatedAt
+          })),
+          pagination: {
+            page,
+            limit,
+            total,
+            pages: Math.ceil(total / limit)
+          }
+        });
+        
+      } catch (error) {
+        console.error('Error listing CVs:', error);
+        res.code(500).send({
+          success: false,
+          message: 'Failed to list CVs',
           error: error.message
         });
       }
