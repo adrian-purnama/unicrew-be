@@ -3,7 +3,7 @@ const jobPostDto = {
         type: "object",
         required: ["title", "workType", "requiredSkills"],
         properties: {
-            title: { type: "string" },
+            title: { type: "string", minLength: 1 },
             description: { type: "string" },
             workType: { type: "string", enum: ["remote", "onsite", "hybrid"] },
             location: {
@@ -17,10 +17,32 @@ const jobPostDto = {
             requiredSkills: {
                 type: "array",
                 items: { type: "string" },
+                minItems: 1,
             },
             salaryMin: { type: "number", minimum: 0 },
             salaryMax: { type: "number", minimum: 0 },
             additionalInfo: { type: "string" },
+        },
+        if: {
+            properties: { workType: { const: "remote" } }
+        },
+        then: {
+            // For remote jobs, location is not required
+        },
+        else: {
+            // For onsite/hybrid jobs, location is required
+            required: ["location"],
+            properties: {
+                location: {
+                    type: "object",
+                    required: ["provinsi", "kabupaten", "kecamatan"],
+                    properties: {
+                        provinsi: { type: "string", minLength: 1 },
+                        kabupaten: { type: "string", minLength: 1 },
+                        kecamatan: { type: "string", minLength: 1 },
+                    },
+                },
+            },
         },
     },
 };
