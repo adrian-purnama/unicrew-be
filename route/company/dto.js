@@ -4,7 +4,18 @@ const jobPostDto = {
         required: ["title", "workType", "requiredSkills"],
         properties: {
             title: { type: "string" },
-            description: { type: "string" },
+            descriptions: {
+                type: "array",
+                minItems: 1,
+                items: {
+                    type: "object",
+                    required: ["title", "content"],
+                    properties: {
+                        title: { type: "string", minLength: 1 },
+                        content: { type: "string", minLength: 1 },
+                    },
+                },
+            },
             workType: { type: "string", enum: ["remote", "onsite", "hybrid"] },
             location: {
                 type: "object",

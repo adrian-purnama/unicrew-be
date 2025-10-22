@@ -14,10 +14,17 @@ const jobPostSchema = new mongoose.Schema(
             trim: true,
         },
 
-        description: {
-            type: String,
-            required: false,
-        },
+        descriptions: [{
+            title: {
+                type: String,
+                required: true,
+                trim: true,
+            },
+            content: {
+                type: String,
+                required: true,
+            },
+        }],
 
         workType: {
             type: String,

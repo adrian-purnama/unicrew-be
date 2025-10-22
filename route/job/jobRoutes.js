@@ -24,7 +24,7 @@ module.exports = async function (fastify) {
         const companyId = req.userId;
         const {
           title,
-          description,
+          descriptions,
           workType,
           location,
           requiredSkills,
@@ -56,7 +56,7 @@ module.exports = async function (fastify) {
         const newJob = await JobPost.create({
           company: companyId,
           title,
-          description,
+          descriptions,
           workType,
           location,
           requiredSkills,
@@ -166,6 +166,125 @@ fastify.get(
       const { id } = req.params;
       await JobPost.findOneAndDelete({ _id: id, company: req.userId });
       res.send({ message: "Job deleted" });
+    }
+  );
+
+  // Update job descriptions only
+  fastify.patch(
+    "/job/:id/descriptions",
+    {
+      preHandler: roleAuth(["company"]),
+      schema: {
+        body: {
+          type: "object",
+          required: ["descriptions"],
+          properties: {
+            descriptions: {
+              type: "array",
+              minItems: 1,
+              items: {
+                type: "object",
+                required: ["title", "content"],
+                properties: {
+                  title: { type: "string", minLength: 1 },
+                  content: { type: "string", minLength: 1 },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { descriptions } = req.body;
+
+        const updatedJob = await JobPost.findOneAndUpdate(
+          { _id: id, company: req.userId },
+          { descriptions },
+          { new: true, runValidators: true }
+        );
+
+        if (!updatedJob) {
+          return res.code(404).send({ message: "Job not found" });
+        }
+
+        res.send({ message: "Job descriptions updated successfully", job: updatedJob });
+      } catch (err) {
+        console.error("Error updating job descriptions:", err);
+        res.code(500).send({ message: "Failed to update job descriptions" });
+      }
+    }
+  );
+
+  // Update job post
+  fastify.put(
+    "/job/:id",
+    {
+      preHandler: roleAuth(["company"]),
+      schema: jobPostDto,
+    },
+    async (req, res) => {
+      try {
+        const { id } = req.params;
+        const {
+          title,
+          descriptions,
+          workType,
+          location,
+          requiredSkills,
+          salaryMin,
+          salaryMax,
+          salaryCurrency,
+        } = req.body;
+
+        // Validate salary range
+        if (salaryMin && salaryMax && salaryMin > salaryMax) {
+          return res.code(400).send({ 
+            message: "Minimum salary cannot be greater than maximum salary" 
+          });
+        }
+
+        // Validate that both salary values are positive if provided
+        if (salaryMin && salaryMin < 0) {
+          return res.code(400).send({ 
+            message: "Minimum salary cannot be negative" 
+          });
+        }
+
+        if (salaryMax && salaryMax < 0) {
+          return res.code(400).send({ 
+            message: "Maximum salary cannot be negative" 
+          });
+        }
+
+        const updatedJob = await JobPost.findOneAndUpdate(
+          { _id: id, company: req.userId },
+          {
+            title,
+            descriptions,
+            workType,
+            location,
+            requiredSkills,
+            salaryRange: {
+              min: salaryMin,
+              max: salaryMax,
+              currency: salaryCurrency || "IDR",
+            },
+          },
+          { new: true, runValidators: true }
+        );
+
+        if (!updatedJob) {
+          return res.code(404).send({ message: "Job not found" });
+        }
+
+        res.send({ message: "Job updated successfully", job: updatedJob });
+      } catch (err) {
+        console.error("Error updating job:", err);
+        res.code(500).send({ message: "Failed to update job" });
+      }
     }
   );
 
