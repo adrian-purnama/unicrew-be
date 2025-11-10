@@ -32,6 +32,11 @@ const {
 } = require("../../helper/normalizeHelper");
 const { default: mongoose } = require("mongoose");
 const Admin = require("../../schema/adminSchema");
+const { exec } = require("child_process");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { EJSON } = require("bson");
 
 function toBool(v) {
   if (v === undefined) return undefined;
@@ -57,6 +62,112 @@ function regexOrNull(q) {
 }
 
 async function adminRoutes(fastify, options) {
+  fastify.get(
+    "/db/dump",
+    { preHandler: roleAuth(["admin"]) },
+    async (req, res) => {
+      const mongoUri = process.env.MONGODB_LINK;
+      if (!mongoUri) {
+        return res
+          .code(500)
+          .send({ message: "MongoDB connection string is not configured" });
+      }
+
+      const dumpFileName = `unicru-dump-${Date.now()}.gz`;
+      const dumpFilePath = path.join(os.tmpdir(), dumpFileName);
+      const dumpCommand = `mongodump --uri="${mongoUri}" --archive="${dumpFilePath}" --gzip`;
+
+      try {
+        await new Promise((resolve, reject) => {
+          exec(dumpCommand, (error, stdout, stderr) => {
+            if (error) {
+              reject(
+                new Error(
+                  stderr ||
+                    error.message ||
+                    "Unknown error occurred while running mongodump"
+                )
+              );
+            } else {
+              resolve();
+            }
+          });
+        });
+
+        res.header("Content-Type", "application/gzip");
+        res.header(
+          "Content-Disposition",
+          `attachment; filename="${dumpFileName}"`
+        );
+
+        const stream = fs.createReadStream(dumpFilePath);
+        stream.on("close", () => {
+          fs.unlink(dumpFilePath, () => {});
+        });
+
+        return res.send(stream);
+      } catch (error) {
+        if (fs.existsSync(dumpFilePath)) {
+          fs.unlink(dumpFilePath, () => {});
+        }
+        console.error("Failed to generate MongoDB dump:", error);
+        return res.code(500).send({
+          message:
+            "Failed to create MongoDB dump. Ensure mongodump is installed on the server.",
+        });
+      }
+    }
+  );
+
+  fastify.get(
+    "/db/collections",
+    { preHandler: roleAuth(["admin"]) },
+    async (req, res) => {
+      const collections = await mongoose.connection.db
+        .listCollections({}, { nameOnly: true })
+        .toArray();
+      const names = collections
+        .map((c) => c.name)
+        .filter((name) => !name.startsWith("system."));
+      res.send({ collections: names });
+    }
+  );
+
+  fastify.get(
+    "/db/export",
+    { preHandler: roleAuth(["admin"]) },
+    async (req, res) => {
+      const collectionName = req.query.collection;
+
+      if (!collectionName) {
+        return res
+          .code(400)
+          .send({ message: "Query parameter 'collection' is required" });
+      }
+
+      const collections = await mongoose.connection.db
+        .listCollections({ name: collectionName }, { nameOnly: true })
+        .toArray();
+
+      if (!collections.length) {
+        return res
+          .code(404)
+          .send({ message: `Collection '${collectionName}' not found` });
+      }
+
+      const collection = mongoose.connection.db.collection(collectionName);
+      const documents = await collection.find({}).toArray();
+      const json = EJSON.stringify(documents, null, 2);
+
+      res.header("Content-Type", "application/json");
+      res.header(
+        "Content-Disposition",
+        `attachment; filename="${collectionName}.json"`
+      );
+      res.send(json);
+    }
+  );
+
   fastify.post(
     "/study-program",
     { preHandler: roleAuth(["admin"]) },
