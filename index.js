@@ -138,7 +138,7 @@ await fastify.register(fastifyRateLimit, {
     await fastify.register(chatSocket);
     await fastify.register(chatRoutes, { prefix: "/chat" });
 
-    await fastify.listen({ port: 4000, host: "0.0.0.0" });
+    await fastify.listen({ port: 4001, host: "0.0.0.0" });
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
