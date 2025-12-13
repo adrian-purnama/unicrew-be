@@ -75,7 +75,7 @@ async function startServer() {
 
     await fastify.register(require("@fastify/cors"), {
       origin: (origin, cb) => {
-        const allowed = new Set([FE_LINK]);
+        const allowed = new Set([FE_LINK, "https://unikru.id"]);
         if (!origin) return cb(null, true);
         cb(null, allowed.has(origin));
       },
