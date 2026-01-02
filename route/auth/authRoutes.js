@@ -24,6 +24,10 @@ const {
 dotenv.config();
 const jwtSecret = process.env.JWT_SECRET;
 const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS) || 10;
+
+if (!jwtSecret) {
+  throw new Error("JWT_SECRET environment variable is not set. Please configure it in your .env file.");
+}
 // const dotenv = require("dotenv");
 // dotenv.config();
 // const salt = process.env.SALT || 10

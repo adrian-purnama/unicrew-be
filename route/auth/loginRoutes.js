@@ -10,6 +10,10 @@ const { LoginDto } = require("./dto");
 dotenv.config();
 const jwtSecret = process.env.JWT_SECRET;
 
+if (!jwtSecret) {
+  throw new Error("JWT_SECRET environment variable is not set. Please configure it in your .env file.");
+}
+
 const roleModelMap = {
   user: User,
   admin: Admin,

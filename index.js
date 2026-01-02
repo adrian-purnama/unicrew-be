@@ -42,8 +42,30 @@ const CVMakeResult = require("./schema/cvMakeResultSchema");
 const { setupTTLIndex } = require("./helper/gridfsHelper");
 
 dotenv.config();
+
+// Validate required environment variables
+const requiredEnvVars = {
+  JWT_SECRET: process.env.JWT_SECRET,
+  MONGODB_LINK: process.env.MONGODB_LINK,
+  FE_LINK: process.env.FE_LINK,
+};
+
+for (const [key, value] of Object.entries(requiredEnvVars)) {
+  if (!value) {
+    console.error(`❌ Error: Missing required environment variable: ${key}`);
+    console.error(`   Please add ${key} to your .env file`);
+    process.exit(1);
+  }
+}
+
 const MONGODB_URI = process.env.MONGODB_LINK;
 const FE_LINK = process.env.FE_LINK;
+const JWT_SECRET = process.env.JWT_SECRET;
+
+// Validate JWT_SECRET strength
+if (JWT_SECRET.length < 32) {
+  console.warn(`⚠️  Warning: JWT_SECRET is less than 32 characters. Consider using a stronger secret.`);
+}
 
 async function startServer() {
   try {
@@ -74,11 +96,7 @@ async function startServer() {
     await setupTTLIndex();
 
     await fastify.register(require("@fastify/cors"), {
-      origin: (origin, cb) => {
-        const allowed = new Set([FE_LINK, "https://unikru.id"]);
-        if (!origin) return cb(null, true);
-        cb(null, allowed.has(origin));
-      },
+      origin: true, // Allow all origins
       methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
       allowedHeaders: ["Content-Type", "Authorization"],
       exposedHeaders: ["Content-Disposition"],

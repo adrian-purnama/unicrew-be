@@ -1,51 +1,92 @@
-const nodemailer = require("nodemailer");
+const { TransactionalEmailsApi, SendSmtpEmail } = require("@getbrevo/brevo");
 const dotenv = require("dotenv");
 
 dotenv.config();
 
-const mailUser = process.env.GMAIL_USER;      
-const mailPassword = process.env.GMAIL_PASSWORD;
-const feLink = process.env.FE_LINK
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const BREVO_SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL || "noreply@unikru.id";
+const BREVO_SENDER_NAME = process.env.BREVO_SENDER_NAME || "Unicru";
+const feLink = process.env.FE_LINK;
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: mailUser,
-    pass: mailPassword
-  }
-});
+if (!BREVO_API_KEY) {
+  throw new Error("BREVO_API_KEY environment variable is not set. Please configure it in your .env file.");
+}
+
+// Initialize Brevo API client
+const apiInstance = new TransactionalEmailsApi();
+apiInstance.authentications.apiKey.apiKey = BREVO_API_KEY;
 
 /**
- * Sends a basic email using Nodemailer.
+ * Sends a basic email using Brevo.
  * @param {string} to - Recipient email
  * @param {string} subject - Email subject
  * @param {string} html - Email HTML content
  */
 const sendEmail = async (to, subject, html) => {
-  const mailOptions = {
-    from: `"Unicru" <${mailUser}>`,
-    to,
-    subject,
-    html
+  const sendSmtpEmail = new SendSmtpEmail();
+  
+  sendSmtpEmail.sender = { 
+    email: BREVO_SENDER_EMAIL, 
+    name: BREVO_SENDER_NAME 
   };
+  sendSmtpEmail.to = [{ email: to }];
+  sendSmtpEmail.subject = subject;
+  sendSmtpEmail.htmlContent = html;
 
-  return transporter.sendMail(mailOptions);
+  try {
+    const result = await apiInstance.sendTransacEmail(sendSmtpEmail);
+    return result;
+  } catch (error) {
+    console.error("Brevo API Error:", error);
+    throw new Error(`Failed to send email: ${error.message || "Unknown error"}`);
+  }
 };
 
 /**
  * Sends an account verification email with a link containing the OTP token.
  * @param {string} targetEmail - The recipient's email address.
  * @param {string} otp - The OTP token to be used in the verification URL.
+ * @param {boolean} showCode - Whether to prominently display the OTP code (for pre-registration)
  */
-const sendVerifyEmail = async (targetEmail, otp, role) => {
+const sendVerifyEmail = async (targetEmail, otp, role, showCode = false) => {
   try {
     console.log(`sending email to ${targetEmail}`);
     const verifyLink = `${feLink}/verify?email=${targetEmail}&token=${otp}&role=${role}`;
 
-    const subject = 'Verify Your Account';
-    const html = `
+    const subject = showCode ? `Your Unicru Verification Code: ${otp}` : 'Verify Your Account';
+    
+    let html = `
       <div style="font-family: Arial, sans-serif; padding: 20px;">
         <h2>Welcome to Unicru 🎓</h2>
+    `;
+
+    if (showCode) {
+      // Pre-registration: Show OTP code prominently
+      html += `
+        <p>Please use the verification code below to continue your registration:</p>
+        <div style="
+          background-color: #f0f0f0;
+          border: 2px solid #4CAF50;
+          border-radius: 8px;
+          padding: 20px;
+          text-align: center;
+          margin: 20px 0;
+        ">
+          <p style="margin: 0; font-size: 14px; color: #666;">Your verification code is:</p>
+          <p style="margin: 10px 0 0 0; font-size: 32px; font-weight: bold; color: #4CAF50; letter-spacing: 4px;">
+            ${otp}
+          </p>
+        </div>
+        <p style="color: #666; font-size: 14px;">
+          Enter this code in the registration form to verify your email address.
+        </p>
+        <p style="color: #999; font-size: 12px; margin-top: 20px;">
+          This code will expire in 10 minutes.
+        </p>
+      `;
+    } else {
+      // Post-registration: Show link
+      html += `
         <p>Please verify your email by clicking the button below:</p>
         <a href="${verifyLink}" style="
           display: inline-block;
@@ -58,8 +99,10 @@ const sendVerifyEmail = async (targetEmail, otp, role) => {
         ">Verify Email</a>
         <p>If the button doesn't work, copy and paste this link into your browser:</p>
         <p><a href="${verifyLink}">${verifyLink}</a></p>
-      </div>
-    `;
+      `;
+    }
+
+    html += `</div>`;
 
     await sendEmail(targetEmail, subject, html);
   } catch (error) {

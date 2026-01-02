@@ -12,6 +12,10 @@ const roleModelMap = {
 
 const jwtSecret = process.env.JWT_SECRET;
 
+if (!jwtSecret) {
+  throw new Error("JWT_SECRET environment variable is not set. Please configure it in your .env file.");
+}
+
 /**
  * Required auth: rejects if no/invalid token.
  * Usage: preHandler: roleAuth(["user","company"])

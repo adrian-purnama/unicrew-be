@@ -5,6 +5,11 @@ const Message = require("../../schema/messageSchema");
 const Notification = require("../../schema/notificationSchema");
 
 const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET environment variable is not set. Please configure it in your .env file.");
+}
+
 const activeConnections = {}; // roomId => Set of sockets
 
 module.exports = async function chatSocket(fastify) {

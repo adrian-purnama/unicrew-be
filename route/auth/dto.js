@@ -25,6 +25,7 @@ const UserRegisterDto = {
       "universityId",
       "studyProgramId",
       "externalSystemId",
+      "verificationToken",
     ],
     properties: {
       fullName: { type: "string", minLength: 1 },
@@ -39,6 +40,7 @@ const UserRegisterDto = {
       universityId: objectId,
       studyProgramId: objectId,
       externalSystemId: { type: "string" },
+      verificationToken: { type: "string", minLength: 10 },
 
       // optional location if you send it during signup
       provinsiId: objectId,
@@ -60,7 +62,7 @@ const UserRegisterDto = {
 const CompanyRegisterDto = {
   body: {
     type: "object",
-    required: ["companyName", "industries", "email", "password", "location"],
+    required: ["companyName", "industries", "email", "password", "location", "verificationToken"],
     properties: {
       companyName: { type: "string", minLength: 1 },
       industries: {
@@ -92,6 +94,7 @@ const CompanyRegisterDto = {
       },
       email: { type: "string", format: "email", maxLength: 50 },
       password: { type: "string", minLength: 6 },
+      verificationToken: { type: "string", minLength: 10 },
     },
     additionalProperties: false,
   },
@@ -178,6 +181,31 @@ const ResetPasswordDto = {
   },
 };
 
+const SendVerificationCodeDto = {
+  body: {
+    type: "object",
+    required: ["email", "role"],
+    properties: {
+      email: { type: "string", format: "email", maxLength: 50 },
+      role: { type: "string", enum: ["user", "company"] },
+    },
+    additionalProperties: false,
+  },
+};
+
+const VerifyEmailCodeDto = {
+  body: {
+    type: "object",
+    required: ["email", "role", "otp"],
+    properties: {
+      email: { type: "string", format: "email", maxLength: 50 },
+      role: { type: "string", enum: ["user", "company"] },
+      otp: { type: "string", minLength: 6, maxLength: 6 },
+    },
+    additionalProperties: false,
+  },
+};
+
 module.exports = {
   AdminRegisterDto,
   UserRegisterDto,
@@ -187,4 +215,6 @@ module.exports = {
   ReverifyDto,
   ForgotPasswordDto,
   ResetPasswordDto,
+  SendVerificationCodeDto,
+  VerifyEmailCodeDto,
 };
