@@ -1,4 +1,4 @@
-const brevo = require("@getbrevo/brevo");
+const { TransactionalEmailsApi, SendSmtpEmail } = require("@getbrevo/brevo");
 const dotenv = require("dotenv");
 
 dotenv.config();
@@ -23,17 +23,14 @@ if (!BREVO_API_KEY) {
   throw new Error("BREVO_API_KEY environment variable is not set. Please configure it in your .env file.");
 }
 
-// Initialize Brevo API client with correct authentication
-const defaultClient = brevo.ApiClient.instance;
-const apiKey = defaultClient.authentications['api-key'];
-apiKey.apiKey = BREVO_API_KEY;
+// Initialize Brevo API client with correct authentication (for v3.0.1+)
+const apiInstance = new TransactionalEmailsApi();
+apiInstance.authentications.apiKey.apiKey = BREVO_API_KEY;
 
 // Verify the API key was set
-console.log('[DEBUG] - API Key set on client:', !!apiKey.apiKey);
-console.log('[DEBUG] - API Key on client length:', apiKey.apiKey ? apiKey.apiKey.length : 0);
-console.log('[DEBUG] - API Key on client matches:', apiKey.apiKey === BREVO_API_KEY);
-
-const apiInstance = new brevo.TransactionalEmailsApi();
+console.log('[DEBUG] - API Key set on client:', !!apiInstance.authentications?.apiKey?.apiKey);
+console.log('[DEBUG] - API Key on client length:', apiInstance.authentications?.apiKey?.apiKey ? apiInstance.authentications.apiKey.apiKey.length : 0);
+console.log('[DEBUG] - API Key on client matches:', apiInstance.authentications?.apiKey?.apiKey === BREVO_API_KEY);
 
 /**
  * Sends a basic email using Brevo.
@@ -52,12 +49,12 @@ const sendEmail = async (to, subject, html) => {
   console.log('[DEBUG] Sender name:', BREVO_SENDER_NAME);
   
   // Check what's actually set on the API client
-  const currentApiKey = defaultClient.authentications['api-key']?.apiKey;
+  const currentApiKey = apiInstance.authentications?.apiKey?.apiKey;
   console.log('[DEBUG] API Key on client (first 15):', currentApiKey ? currentApiKey.substring(0, 15) + '...' : 'MISSING');
   console.log('[DEBUG] API Key on client (last 10):', currentApiKey ? '...' + currentApiKey.substring(currentApiKey.length - 10) : 'MISSING');
   console.log('[DEBUG] API Keys match:', BREVO_API_KEY === currentApiKey);
   
-  const sendSmtpEmail = new brevo.SendSmtpEmail();
+  const sendSmtpEmail = new SendSmtpEmail();
   
   sendSmtpEmail.sender = { 
     email: BREVO_SENDER_EMAIL, 
