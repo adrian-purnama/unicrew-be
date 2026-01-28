@@ -79,18 +79,31 @@ async function startServer() {
     // Setup TTL index for CV files (30-minute auto-deletion)
     await setupTTLIndex();
 
+    // Register CORS BEFORE rate limiting to ensure preflight requests work
     await fastify.register(require("@fastify/cors"), {
       origin: true, // Allow all origins
-      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-      allowedHeaders: ["Content-Type", "Authorization"],
+      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
+      allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
       exposedHeaders: ["Content-Disposition"],
       credentials: false,
+      preflight: true, // Explicitly enable preflight handling
+      strictPreflight: false, // Don't require preflight for all requests
     });
 
-await fastify.register(fastifyRateLimit, {
-  max: 100,
-  timeWindow: '1 minute',
-});
+    // Add global OPTIONS handler to ensure preflight requests are handled
+    fastify.options('*', async (request, reply) => {
+      reply.code(204).send();
+    });
+
+    await fastify.register(fastifyRateLimit, {
+      max: 100,
+      timeWindow: '1 minute',
+      skipOnError: true, // Don't fail if rate limit check fails
+      skip: (request) => {
+        // Skip rate limiting for OPTIONS requests (preflight)
+        return request.method === 'OPTIONS';
+      }
+    });
 
     await fastify.register(swagger, {
       swagger: {
