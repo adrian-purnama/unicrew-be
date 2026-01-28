@@ -1,4 +1,4 @@
-const { TransactionalEmailsApi, SendSmtpEmail } = require("@getbrevo/brevo");
+const brevo = require("@getbrevo/brevo");
 const dotenv = require("dotenv");
 
 dotenv.config();
@@ -8,13 +8,32 @@ const BREVO_SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL || "noreply@unikru.id"
 const BREVO_SENDER_NAME = process.env.BREVO_SENDER_NAME || "Unicru";
 const feLink = process.env.FE_LINK;
 
+// Debug: Print API key info (without exposing full key)
+console.log('[DEBUG] Brevo Configuration Check:');
+console.log('[DEBUG] - BREVO_API_KEY exists:', !!BREVO_API_KEY);
+console.log('[DEBUG] - BREVO_API_KEY length:', BREVO_API_KEY ? BREVO_API_KEY.length : 0);
+console.log('[DEBUG] - BREVO_API_KEY starts with:', BREVO_API_KEY ? BREVO_API_KEY.substring(0, 10) : 'N/A');
+console.log('[DEBUG] - BREVO_API_KEY ends with:', BREVO_API_KEY ? BREVO_API_KEY.substring(BREVO_API_KEY.length - 10) : 'N/A');
+console.log('[DEBUG] - BREVO_SENDER_EMAIL:', BREVO_SENDER_EMAIL);
+console.log('[DEBUG] - BREVO_SENDER_NAME:', BREVO_SENDER_NAME);
+console.log('[DEBUG] - FE_LINK:', feLink);
+console.log('[DEBUG] - NODE_ENV:', process.env.NODE_ENV);
+
 if (!BREVO_API_KEY) {
   throw new Error("BREVO_API_KEY environment variable is not set. Please configure it in your .env file.");
 }
 
-// Initialize Brevo API client
-const apiInstance = new TransactionalEmailsApi();
-apiInstance.authentications.apiKey.apiKey = BREVO_API_KEY;
+// Initialize Brevo API client with correct authentication
+const defaultClient = brevo.ApiClient.instance;
+const apiKey = defaultClient.authentications['api-key'];
+apiKey.apiKey = BREVO_API_KEY;
+
+// Verify the API key was set
+console.log('[DEBUG] - API Key set on client:', !!apiKey.apiKey);
+console.log('[DEBUG] - API Key on client length:', apiKey.apiKey ? apiKey.apiKey.length : 0);
+console.log('[DEBUG] - API Key on client matches:', apiKey.apiKey === BREVO_API_KEY);
+
+const apiInstance = new brevo.TransactionalEmailsApi();
 
 /**
  * Sends a basic email using Brevo.
@@ -23,9 +42,22 @@ apiInstance.authentications.apiKey.apiKey = BREVO_API_KEY;
  * @param {string} html - Email HTML content
  */
 const sendEmail = async (to, subject, html) => {
-  console.log('[DEBUG] sendEmail called:', { to, subject, hasApiKey: !!BREVO_API_KEY, hasSenderEmail: !!BREVO_SENDER_EMAIL });
+  console.log('[DEBUG] ========== sendEmail called ==========');
+  console.log('[DEBUG] Recipient:', to);
+  console.log('[DEBUG] Subject:', subject);
+  console.log('[DEBUG] Has API Key:', !!BREVO_API_KEY);
+  console.log('[DEBUG] API Key from env (first 15):', BREVO_API_KEY ? BREVO_API_KEY.substring(0, 15) + '...' : 'MISSING');
+  console.log('[DEBUG] API Key from env (last 10):', BREVO_API_KEY ? '...' + BREVO_API_KEY.substring(BREVO_API_KEY.length - 10) : 'MISSING');
+  console.log('[DEBUG] Sender email:', BREVO_SENDER_EMAIL);
+  console.log('[DEBUG] Sender name:', BREVO_SENDER_NAME);
   
-  const sendSmtpEmail = new SendSmtpEmail();
+  // Check what's actually set on the API client
+  const currentApiKey = defaultClient.authentications['api-key']?.apiKey;
+  console.log('[DEBUG] API Key on client (first 15):', currentApiKey ? currentApiKey.substring(0, 15) + '...' : 'MISSING');
+  console.log('[DEBUG] API Key on client (last 10):', currentApiKey ? '...' + currentApiKey.substring(currentApiKey.length - 10) : 'MISSING');
+  console.log('[DEBUG] API Keys match:', BREVO_API_KEY === currentApiKey);
+  
+  const sendSmtpEmail = new brevo.SendSmtpEmail();
   
   sendSmtpEmail.sender = { 
     email: BREVO_SENDER_EMAIL, 
@@ -35,18 +67,45 @@ const sendEmail = async (to, subject, html) => {
   sendSmtpEmail.subject = subject;
   sendSmtpEmail.htmlContent = html;
 
+  console.log('[DEBUG] Email object created:', {
+    sender: sendSmtpEmail.sender,
+    to: sendSmtpEmail.to,
+    subject: sendSmtpEmail.subject,
+    hasHtml: !!sendSmtpEmail.htmlContent
+  });
+
   try {
     console.log('[DEBUG] Attempting to send email via Brevo API...');
+    
     const result = await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log('[DEBUG] Email sent successfully via Brevo:', { messageId: result.messageId, to });
+    console.log('[DEBUG] ✅ Email sent successfully via Brevo:', { messageId: result.messageId, to });
     return result;
   } catch (error) {
-    console.error('[DEBUG] ❌ Brevo API error:', {
-      message: error.message,
-      response: error.response?.body,
-      status: error.response?.statusCode,
-      stack: error.stack?.substring(0, 200)
-    });
+    console.error('[DEBUG] ❌ ========== Brevo API Error ==========');
+    console.error('[DEBUG] Error message:', error.message);
+    console.error('[DEBUG] Error name:', error.name);
+    console.error('[DEBUG] Error code:', error.code);
+    
+    if (error.response) {
+      console.error('[DEBUG] Response status:', error.response.status);
+      console.error('[DEBUG] Response statusText:', error.response.statusText);
+      console.error('[DEBUG] Response statusCode:', error.response.statusCode);
+      console.error('[DEBUG] Response headers:', JSON.stringify(error.response.headers, null, 2));
+      console.error('[DEBUG] Response data:', JSON.stringify(error.response.data, null, 2));
+      console.error('[DEBUG] Response body:', error.response.body);
+    }
+    
+    if (error.request) {
+      console.error('[DEBUG] Request config:', {
+        url: error.config?.url,
+        method: error.config?.method,
+        headers: error.config?.headers ? Object.keys(error.config.headers) : 'N/A'
+      });
+    }
+    
+    console.error('[DEBUG] Full error stack:', error.stack);
+    console.error('[DEBUG] =========================================');
+    
     throw new Error(`Failed to send email: ${error.message || "Unknown error"}`);
   }
 };
