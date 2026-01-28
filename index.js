@@ -77,6 +77,7 @@ async function startServer() {
     await setupTTLIndex();
 
     // Register CORS BEFORE rate limiting to ensure preflight requests work
+    // Note: @fastify/cors automatically handles OPTIONS requests, so we don't need a manual handler
     await fastify.register(require("@fastify/cors"), {
       origin: true, // Allow all origins
       methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
@@ -85,11 +86,6 @@ async function startServer() {
       credentials: false,
       preflight: true, // Explicitly enable preflight handling
       strictPreflight: false, // Don't require preflight for all requests
-    });
-
-    // Add global OPTIONS handler to ensure preflight requests are handled
-    fastify.options('*', async (request, reply) => {
-      reply.code(204).send();
     });
 
     await fastify.register(fastifyRateLimit, {
