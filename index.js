@@ -53,10 +53,7 @@ if (!process.env.BREVO_API_KEY) {
 
 async function startServer() {
   try {
-    await mongoose.connect(MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    await mongoose.connect(MONGODB_URI);
     fastify.log.info("✅ MongoDB connected");
     console.log("✅ MongoDB connected");
 
