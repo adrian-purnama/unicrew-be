@@ -27,11 +27,7 @@ const {
 
 const jwtSecret = process.env.JWT_SECRET;
 const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS) || 10;
-const GMAIL_MASTER = process.env.GMAIL_MASTER;
-
-if (!jwtSecret) {
-  throw new Error("JWT_SECRET environment variable is not set. Please configure it in your .env file.");
-}
+const GMAIL_MASTER = process.env.GMAIL_MASTER
 
 // Small helper: don’t let email sending hang forever
 const sendWithTimeout = (fn, ms = 8000) =>
@@ -67,21 +63,26 @@ async function registerRoutes(fastify) {
       },
     },
     async (req, res) => {
+      console.log('[DEBUG] /register/send-verification-code - Handler entry:', { email: req.body?.email, role: req.body?.role });
       const { email, role } = req.body;
 
       try {
         const lowerEmail = email.toLowerCase().trim();
+        console.log('[DEBUG] After email normalization:', { lowerEmail, length: lowerEmail.length });
         
         // Validate email format
         if (!lowerEmail || lowerEmail.length > 50) {
+          console.log('[DEBUG] Email validation failed:', { lowerEmail, length: lowerEmail?.length });
           return res.code(422).send({ message: "Invalid email." });
         }
 
         // For user registration, validate academic email
         if (role === "user") {
+          console.log('[DEBUG] Validating academic email:', { lowerEmail, role });
           const academicEmailRe =
             /^(?!.*\.\.)[A-Za-z0-9](?:[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{0,62}[A-Za-z0-9])?@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+(?:ac\.id|edu)$/i;
           if (!academicEmailRe.test(lowerEmail)) {
+            console.log('[DEBUG] Academic email validation failed:', { lowerEmail });
             return res.code(422).send({
               message: "Email must be valid and end with .ac.id or .edu.",
             });
@@ -92,21 +93,32 @@ async function registerRoutes(fastify) {
         let Model;
         if (role === "user") Model = User;
         else if (role === "company") Model = Company;
-        else return res.code(400).send({ message: "Invalid role" });
+        else {
+          console.log('[DEBUG] Invalid role:', { role });
+          return res.code(400).send({ message: "Invalid role" });
+        }
 
+        console.log('[DEBUG] Before database check:', { lowerEmail, role, model: role === 'user' ? 'User' : 'Company' });
         const exist = await Model.findOne({ email: lowerEmail });
+        console.log('[DEBUG] After database check:', { exists: !!exist });
         if (exist) {
           return res.code(409).send({ message: `${role === "user" ? "User" : "Company"} already registered` });
         }
 
         // Generate and send OTP
+        console.log('[DEBUG] Before OTP generation:', { lowerEmail, role });
         const otp = await createOtpForEmail(lowerEmail, role);
+        console.log('[DEBUG] After OTP generation:', { otp: otp?.substring(0, 2) + '****' });
+        
+        console.log('[DEBUG] Before email send:', { lowerEmail, role });
         await sendWithTimeout(() => sendVerifyEmail(lowerEmail, otp, role, true));
+        console.log('[DEBUG] After email send success:', { lowerEmail });
 
         return res.code(200).send({
           message: "Verification code sent to your email",
         });
       } catch (err) {
+        console.log('[DEBUG] Error caught:', { error: err?.message, stack: err?.stack?.substring(0, 200), name: err?.name });
         console.error("[/register/send-verification-code] failed:", err?.message || err);
         return res.code(500).send({ message: "Failed to send verification code" });
       }
@@ -437,24 +449,9 @@ async function registerRoutes(fastify) {
       socialLinks,
       email,
       password,
-      verificationToken,
     } = req.body;
 
     try {
-      // Validate verification token
-      let decoded;
-      try {
-        decoded = jwt.verify(verificationToken, jwtSecret);
-        if (decoded.purpose !== "email-verification" || decoded.role !== "company") {
-          return res.code(401).send({ message: "Invalid verification token" });
-        }
-        if (decoded.email !== email.toLowerCase().trim()) {
-          return res.code(401).send({ message: "Email mismatch" });
-        }
-      } catch (err) {
-        return res.code(401).send({ message: "Invalid or expired verification token" });
-      }
-
       // lower name and check email
       const lowerCompanyName = companyName.toLowerCase().trim();
       const lowerEmail = (email || "").toLowerCase().trim();
@@ -488,28 +485,25 @@ async function registerRoutes(fastify) {
         socialLinks,
         email: lowerEmail,
         password: hashedPassword,
-        isVerified: true, // Already verified before registration
+        isVerified: false,
       });
 
-      // Create JWT token for immediate login
-      const token = jwt.sign(
-        {
-          _id: company._id,
-          role: company.role,
-          email: company.email,
-          name: company.companyName,
-          profilePicture: company.profilePicture,
-        },
-        jwtSecret,
-        { expiresIn: "7d" }
-      );
+      try {
+        const otp = await createOtp(company._id);
+        await sendWithTimeout(() =>
+          sendVerifyEmail(company.email, otp, "company")
+        );
+      } catch (e) {
+        await Company.deleteOne({ _id: company._id }).catch(() => {});
+        console.error("[/register/company] email failed:", e?.message || e);
+        return res
+          .code(500)
+          .send({ message: "Failed to send verification email." });
+      }
 
       return res
         .code(201)
-        .send({ 
-          message: "Company registered successfully",
-          token,
-        });
+        .send({ message: "Company registered, please verify email" });
     } catch (err) {
       if (err && err.code === 11000) {
         return res.code(409).send({ message: "Company already registered" });

@@ -23,6 +23,8 @@ apiInstance.authentications.apiKey.apiKey = BREVO_API_KEY;
  * @param {string} html - Email HTML content
  */
 const sendEmail = async (to, subject, html) => {
+  console.log('[DEBUG] sendEmail called:', { to, subject, hasApiKey: !!BREVO_API_KEY, hasSenderEmail: !!BREVO_SENDER_EMAIL });
+  
   const sendSmtpEmail = new SendSmtpEmail();
   
   sendSmtpEmail.sender = { 
@@ -34,10 +36,17 @@ const sendEmail = async (to, subject, html) => {
   sendSmtpEmail.htmlContent = html;
 
   try {
+    console.log('[DEBUG] Attempting to send email via Brevo API...');
     const result = await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log('[DEBUG] Email sent successfully via Brevo:', { messageId: result.messageId, to });
     return result;
   } catch (error) {
-    console.error("Brevo API Error:", error);
+    console.error('[DEBUG] ❌ Brevo API error:', {
+      message: error.message,
+      response: error.response?.body,
+      status: error.response?.statusCode,
+      stack: error.stack?.substring(0, 200)
+    });
     throw new Error(`Failed to send email: ${error.message || "Unknown error"}`);
   }
 };
@@ -46,11 +55,12 @@ const sendEmail = async (to, subject, html) => {
  * Sends an account verification email with a link containing the OTP token.
  * @param {string} targetEmail - The recipient's email address.
  * @param {string} otp - The OTP token to be used in the verification URL.
+ * @param {string} role - The role of the user.
  * @param {boolean} showCode - Whether to prominently display the OTP code (for pre-registration)
  */
 const sendVerifyEmail = async (targetEmail, otp, role, showCode = false) => {
   try {
-    console.log(`sending email to ${targetEmail}`);
+    console.log(`[DEBUG] sending email to ${targetEmail}, showCode: ${showCode}`);
     const verifyLink = `${feLink}/verify?email=${targetEmail}&token=${otp}&role=${role}`;
 
     const subject = showCode ? `Your Unicru Verification Code: ${otp}` : 'Verify Your Account';
@@ -105,8 +115,9 @@ const sendVerifyEmail = async (targetEmail, otp, role, showCode = false) => {
     html += `</div>`;
 
     await sendEmail(targetEmail, subject, html);
+    console.log(`[DEBUG] Email sent successfully to ${targetEmail}`);
   } catch (error) {
-    console.error('❌ Error sending verification email:', error.message);
+    console.error('[DEBUG] ❌ Error sending verification email:', error.message);
     throw new Error(error.message);
   }
 };

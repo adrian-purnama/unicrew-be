@@ -42,29 +42,13 @@ const CVMakeResult = require("./schema/cvMakeResultSchema");
 const { setupTTLIndex } = require("./helper/gridfsHelper");
 
 dotenv.config();
-
-// Validate required environment variables
-const requiredEnvVars = {
-  JWT_SECRET: process.env.JWT_SECRET,
-  MONGODB_LINK: process.env.MONGODB_LINK,
-  FE_LINK: process.env.FE_LINK,
-};
-
-for (const [key, value] of Object.entries(requiredEnvVars)) {
-  if (!value) {
-    console.error(`❌ Error: Missing required environment variable: ${key}`);
-    console.error(`   Please add ${key} to your .env file`);
-    process.exit(1);
-  }
-}
-
 const MONGODB_URI = process.env.MONGODB_LINK;
 const FE_LINK = process.env.FE_LINK;
-const JWT_SECRET = process.env.JWT_SECRET;
 
-// Validate JWT_SECRET strength
-if (JWT_SECRET.length < 32) {
-  console.warn(`⚠️  Warning: JWT_SECRET is less than 32 characters. Consider using a stronger secret.`);
+// Validate email configuration
+if (!process.env.BREVO_API_KEY) {
+  console.warn('⚠️  Warning: BREVO_API_KEY not set in .env file');
+  console.warn('   Email sending will fail. Please configure Brevo API key in .env');
 }
 
 async function startServer() {
